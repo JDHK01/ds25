@@ -23,12 +23,9 @@ class TargetMode(Enum):
 # 任务状态: 枚举类型的类
 class TaskState(Enum):
     """任务执行状态"""
-    IDLE = "idle"              # 空闲，等待目标
-    SEARCHING = "searching"    # 搜索目标中
     TRACKING = "tracking"      # 跟踪目标中
-    ALIGNING = "aligning"      # 精确对准中
-    COMPLETED = "completed"    # 任务完成
-    LOST = "lost"             # 目标丢失
+    APPROACHING = "approaching" # 靠近目标中
+    COMPLETED = "completed"    # 跟踪完成
 
 # 相机配置: 存储数据的类
 @dataclass
@@ -195,7 +192,7 @@ class VisionGuidanceSystem:
             self.pid_z = PIDController(**pid_config.get('forward', {}))
         
         # 跟踪状态
-        self.task_state = TaskState.IDLE
+        self.task_state = TaskState.TRACKING
         self.is_tracking = False
         self.last_detection_time = 0
         self.detection_timeout = 2.0
@@ -328,37 +325,32 @@ class VisionGuidanceSystem:
             self.is_tracking = True
             self.last_detection_time = time.time()
             
-            # 状态转换逻辑
-            if self.task_state in [TaskState.IDLE, TaskState.SEARCHING, TaskState.LOST]:
-                self.task_state = TaskState.TRACKING
-                self.alignment_start_time = None
-                print(f"状态转换: {self.task_state.value} -> TRACKING")
-            
-            # 检查是否进入对准状态
+            # 简化的状态转换逻辑
+            # 检查是否进入靠近状态
             if pixel_error <= self.completion_tolerance:
                 if self.task_state == TaskState.TRACKING:
-                    self.task_state = TaskState.ALIGNING
+                    self.task_state = TaskState.APPROACHING
                     self.alignment_start_time = time.time()
-                    print(f"状态转换: TRACKING -> ALIGNING")
+                    print(f"状态转换: TRACKING -> APPROACHING")
                 
-                # 检查是否完成对准
-                if self.task_state == TaskState.ALIGNING:
+                # 检查是否完成靠近
+                if self.task_state == TaskState.APPROACHING:
                     if time.time() - self.alignment_start_time >= self.alignment_duration:
                         self.task_state = TaskState.COMPLETED
                         self.task_completed = True
                         self.completion_time = time.time()
                         command = DroneCommand(0.0, 0.0, 0.0)  # 停止移动
-                        print(f"状态转换: ALIGNING -> COMPLETED")
-                        print(f"任务完成！保持对准 {self.alignment_duration} 秒")
+                        print(f"状态转换: APPROACHING -> COMPLETED")
+                        print(f"跟踪完成！保持对准 {self.alignment_duration} 秒")
                     else:
                         # 继续保持位置
                         command = DroneCommand(0.0, 0.0, 0.0)
             else:
                 # 需要继续调整位置
-                if self.task_state == TaskState.ALIGNING:
+                if self.task_state == TaskState.APPROACHING:
                     self.task_state = TaskState.TRACKING
                     self.alignment_start_time = None
-                    print(f"状态转换: ALIGNING -> TRACKING (位置偏离)")
+                    print(f"状态转换: APPROACHING -> TRACKING (位置偏离)")
                 
                 command = self.compute_control_command(best_detection)
             
@@ -366,21 +358,18 @@ class VisionGuidanceSystem:
             self._draw_detection(frame, best_detection, command)
             
         else:
-            # 无检测
-            if self.task_state not in [TaskState.IDLE, TaskState.SEARCHING, TaskState.COMPLETED]:
+            # 无检测 - 返回到跟踪状态寻找目标
+            if self.task_state != TaskState.COMPLETED:
                 if time.time() - self.last_detection_time > self.detection_timeout:
-                    self.task_state = TaskState.LOST
+                    self.task_state = TaskState.TRACKING
                     self.is_tracking = False
                     self.alignment_start_time = None
-                    print(f"状态转换: {self.task_state.value} -> LOST")
+                    print(f"目标丢失，返回跟踪状态")
                     # 重置PID控制器
                     self.pid_x.reset()
                     self.pid_y.reset()
                     if self.pid_z:
                         self.pid_z.reset()
-            elif self.task_state == TaskState.IDLE:
-                self.task_state = TaskState.SEARCHING
-                print(f"状态转换: IDLE -> SEARCHING")
         
         # 绘制状态信息
         self._draw_status(frame)
@@ -425,11 +414,11 @@ class VisionGuidanceSystem:
             cv2.putText(frame, "Offset Compensation: ON", (10, 90), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
-        # 显示对准进度
-        if self.task_state == TaskState.ALIGNING and self.alignment_start_time:
+        # 显示靠近进度
+        if self.task_state == TaskState.APPROACHING and self.alignment_start_time:
             elapsed = time.time() - self.alignment_start_time
             progress = min(elapsed / self.alignment_duration, 1.0)
-            progress_text = f"Aligning: {progress*100:.0f}%"
+            progress_text = f"Approaching: {progress*100:.0f}%"
             cv2.putText(frame, progress_text, (10, 120), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
     
@@ -437,12 +426,9 @@ class VisionGuidanceSystem:
         """绘制系统状态"""
         # 任务状态
         state_color = {
-            TaskState.IDLE: (200, 200, 200),
-            TaskState.SEARCHING: (255, 255, 0),
             TaskState.TRACKING: (0, 255, 255),
-            TaskState.ALIGNING: (0, 255, 0),
-            TaskState.COMPLETED: (0, 255, 0),
-            TaskState.LOST: (0, 0, 255)
+            TaskState.APPROACHING: (255, 255, 0),
+            TaskState.COMPLETED: (0, 255, 0)
         }
         
         status_text = f"State: {self.task_state.value.upper()}"
@@ -475,7 +461,7 @@ class VisionGuidanceSystem:
     
     def reset_task(self):
         """重置任务状态，准备新任务"""
-        self.task_state = TaskState.IDLE
+        self.task_state = TaskState.TRACKING
         self.task_completed = False
         self.completion_time = None
         self.alignment_start_time = None
@@ -495,9 +481,9 @@ class VisionGuidanceSystem:
             'completion_time': self.completion_time,
             'mode': self.target_mode.value
         }
-        if self.task_state == TaskState.ALIGNING and self.alignment_start_time:
+        if self.task_state == TaskState.APPROACHING and self.alignment_start_time:
             elapsed = time.time() - self.alignment_start_time
-            info['alignment_progress'] = min(elapsed / self.alignment_duration, 1.0)
+            info['approaching_progress'] = min(elapsed / self.alignment_duration, 1.0)
         return info
     
     def cleanup(self):
@@ -606,8 +592,8 @@ async def execute_multi_phase_mission(vision_system: VisionGuidanceSystem, drone
                 
                 # 获取任务状态信息
                 task_info = vision_system.get_task_info()
-                if task_info['state'] == 'aligning':
-                    print(f"对准进度: {task_info.get('alignment_progress', 0)*100:.0f}%")
+                if task_info['state'] == 'approaching':
+                    print(f"靠近进度: {task_info.get('approaching_progress', 0)*100:.0f}%")
             
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 return
@@ -698,10 +684,10 @@ if __name__ == "__main__":
                 
                 # 显示任务状态
                 task_info = vision_system.get_task_info()
-                if task_info['state'] != 'idle':
+                if task_info['state'] != 'tracking':
                     print(f"任务状态: {task_info['state']}", end='')
-                    if 'alignment_progress' in task_info:
-                        print(f" (进度: {task_info['alignment_progress']*100:.0f}%)", end='')
+                    if 'approaching_progress' in task_info:
+                        print(f" (进度: {task_info['approaching_progress']*100:.0f}%)", end='')
                     print()
                 
                 # 检查任务完成
@@ -743,13 +729,10 @@ if __name__ == "__main__":
    - 逐步加入实际偏移值
    - 观察"Offset Compensation: ON"提示来确认补偿是否生效
 
-5. 任务状态管理：
-   - IDLE: 空闲状态，等待检测目标
-   - SEARCHING: 搜索目标中
+5. 任务状态管理（简化版）：
    - TRACKING: 跟踪目标，调整位置
-   - ALIGNING: 精确对准中（保持位置）
-   - COMPLETED: 任务完成，可执行下一阶段
-   - LOST: 目标丢失
+   - APPROACHING: 靠近目标中（保持位置）
+   - COMPLETED: 跟踪完成，可执行下一阶段
 
 6. 任务完成条件：
    - 目标在容差范围内（completion_tolerance）
