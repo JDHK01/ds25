@@ -19,7 +19,9 @@ class DetectionVisualizer:
                  show_center: bool = True,
                  show_bbox: bool = True,
                  auto_display: bool = True,
-                 display_delay: int = 1):
+                 display_delay: int = 1,
+                 display_width: Optional[int] = None,
+                 display_height: Optional[int] = None):
         """
         初始化可视化器
         
@@ -37,6 +39,8 @@ class DetectionVisualizer:
             show_bbox: 是否显示边界框
             auto_display: 是否自动显示结果
             display_delay: 显示延迟（毫秒），0表示等待按键
+            display_width: 显示窗口宽度，None表示使用原始宽度
+            display_height: 显示窗口高度，None表示使用原始高度
         """
         self.window_name = window_name
         self.bbox_color = bbox_color
@@ -51,6 +55,8 @@ class DetectionVisualizer:
         self.show_bbox = show_bbox
         self.auto_display = auto_display
         self.display_delay = display_delay
+        self.display_width = display_width
+        self.display_height = display_height
     
     def visualize(self, frame: np.ndarray, detections: List[Dict]) -> np.ndarray:
         """
@@ -121,7 +127,28 @@ class DetectionVisualizer:
     
     def display(self, frame: np.ndarray) -> None:
         """显示图像"""
-        cv2.imshow(self.window_name, frame)
+        display_frame = frame
+        
+        # 调整显示尺寸
+        if self.display_width is not None or self.display_height is not None:
+            h, w = frame.shape[:2]
+            
+            # 计算新的尺寸
+            if self.display_width is not None and self.display_height is not None:
+                new_width, new_height = self.display_width, self.display_height
+            elif self.display_width is not None:
+                # 只指定宽度，按比例计算高度
+                new_width = self.display_width
+                new_height = int(h * (self.display_width / w))
+            else:
+                # 只指定高度，按比例计算宽度
+                new_height = self.display_height
+                new_width = int(w * (self.display_height / h))
+            
+            # 调整图像尺寸
+            display_frame = cv2.resize(frame, (new_width, new_height))
+        
+        cv2.imshow(self.window_name, display_frame)
         cv2.waitKey(self.display_delay)
     
     def wrap_detector(self, detect_func: Callable) -> Callable:
@@ -194,8 +221,116 @@ def draw_detections(frame: np.ndarray,
     return visualizer.visualize(frame, detections)
 
 
-# 使用示例
+
+class QRDetector:
+    def __init__(self):
+        self.min_area = 100  # 最小面积阈值
+    
+    @visualize_detections(
+        window_name="QR Code Detection",
+        bbox_color=(0, 255, 0),  # 绿色边框
+        center_color=(255, 0, 0),  # 蓝色中心点
+        show_area=True,
+        display_delay=1,  # 1毫秒延迟，连续显示
+        display_width=640,  # 可以设置显示宽度
+        display_height=480   # 可以设置显示高度
+    )
+    
+    # def detect_objects(self, frame: np.ndarray) -> List[Dict]:
+    #     """检测多个二维码位置"""
+    #     # 你的原始代码完全不变
+    #     qr_detector = cv2.QRCodeDetector()
+    #     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    #     detections = []
+        
+    #     retval, points = qr_detector.detectMulti(gray)
+        
+    #     if retval and points is not None:
+    #         for qr_points in points:
+    #             qr_points = qr_points.astype(int)
+    #             x_coords = qr_points[:, 0]
+    #             y_coords = qr_points[:, 1]
+    #             x = np.min(x_coords)
+    #             y = np.min(y_coords)
+    #             w = np.max(x_coords) - x
+    #             h = np.max(y_coords) - y
+    #             center_x = x + w // 2
+    #             center_y = y + h // 2
+    #             area = w * h
+                
+    #             if area > self.min_area:
+    #                 detections.append({
+    #                     'center': (center_x, center_y),
+    #                     'bbox': (x, y, x + w, y + h),
+    #                     'area': area
+    #                 })
+        
+    #     return detections
+
+    def detect_objects(self, frame: np.ndarray) -> List[Dict]:
+        """检测图像中红色区域的位置"""
+        # 将图像从 BGR 转换到 HSV
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        # 定义红色的 HSV 范围（红色在HSV中有两个区段）
+        lower_red1 = np.array([0, 100, 100])
+        upper_red1 = np.array([10, 255, 255])
+        lower_red2 = np.array([160, 100, 100])
+        upper_red2 = np.array([180, 255, 255])
+
+        # 创建两个掩码并合并
+        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+        red_mask = cv2.bitwise_or(mask1, mask2)
+
+        # 查找轮廓
+        contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        detections = []
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > self.min_area:
+                x, y, w, h = cv2.boundingRect(cnt)
+                center_x = x + w // 2
+                center_y = y + h // 2
+
+                detections.append({
+                    'center': (center_x, center_y),
+                    'bbox': (x, y, x + w, y + h),
+                    'area': area
+                })
+
+        return detections
+
+
 if __name__ == "__main__":
+    # 使用
+    detector = QRDetector()
+    cap = cv2.VideoCapture(6)  # 或者读取视频文件
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            # 调用检测函数，自动显示可视化结果
+            detections = detector.detect_objects(frame)
+
+            # 按 'q' 退出
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+    except Exception as e:
+        print(f"发生异常: {e}")
+
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+
+
+    
     # 示例1: 使用装饰器
     class Detector:
         def __init__(self):
@@ -257,3 +392,4 @@ if __name__ == "__main__":
         
         return detections
     
+

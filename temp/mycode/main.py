@@ -65,72 +65,75 @@ async def run():
             within local coordinate system")
     
     #==========================执行飞行任务===================================
-            # 相机配置
-    camera_config = vision_guide.CameraConfig(
-        width=640,
-        height=480,
-        fps=30,
-        device_id=0,  # 根据实际相机调整
-        # 相机偏移配置（单位：米）
-        offset_forward=0.0,   # 相机在无人机前方10cm
-        offset_right=0.0,     # 相机在中心线上
-        offset_down=0.0      # 相机在无人机下方5cm
-    )
+    #         # 相机配置
+    # camera_config = vision_guide.CameraConfig(
+    #     width=640,
+    #     height=480,
+    #     fps=30,
+    #     device_id=0,  # 根据实际相机调整
+    #     # 相机偏移配置（单位：米）
+    #     offset_forward=0.0,   # 相机在无人机前方10cm
+    #     offset_right=0.0,     # 相机在中心线上
+    #     offset_down=0.0      # 相机在无人机下方5cm
+    # )
     
-    # 导航配置
-    navigation_config = {
-        'position_tolerance': 100,    # 像素容差
-        'min_target_area': 500,     # 最小目标面积
-        'max_velocity': 0.5,         # 最大速度 m/s
-        'offset_compensation_gain': 0.3,  # 偏移补偿增益（0-1）
-        'alignment_duration': 1.0,   # 对准保持时间（秒）
-        'completion_tolerance': 100   # 完成任务的像素容差
-    }
+    # # 导航配置
+    # navigation_config = {
+    #     'position_tolerance': 100,    # 像素容差
+    #     'min_target_area': 500,     # 最小目标面积
+    #     'max_velocity': 0.5,         # 最大速度 m/s
+    #     'offset_compensation_gain': 0.3,  # 偏移补偿增益（0-1）
+    #     'alignment_duration': 1.0,   # 对准保持时间（秒）
+    #     'completion_tolerance': 100   # 完成任务的像素容差
+    # }
     
-    # PID配置
-    pid_config = {
-        'horizontal': {
-            'kp': 0.3,
-            'ki': 0.0,
-            'kd': 0.0,
-            'output_limit': 0.5
-        },
-        'vertical': {
-            'kp': 0.3,
-            'ki': 0.0,
-            'kd': 0.0,
-            'output_limit': 0.5
-        },
-        'forward': {
-            'kp': 0.3,
-            'ki': 0.0,
-            'kd': 0.0,
-            'output_limit': 0.3
-        }
-    }
+    # # PID配置
+    # pid_config = {
+    #     'horizontal': {
+    #         'kp': 0.3,
+    #         'ki': 0.0,
+    #         'kd': 0.0,
+    #         'output_limit': 0.5
+    #     },
+    #     'vertical': {
+    #         'kp': 0.3,
+    #         'ki': 0.0,
+    #         'kd': 0.0,
+    #         'output_limit': 0.5
+    #     },
+    #     'forward': {
+    #         'kp': 0.3,
+    #         'ki': 0.0,
+    #         'kd': 0.0,
+    #         'output_limit': 0.3
+    #     }
+    # }
     
-    # 创建视觉导航系统
-    vision_system = vision_guide.VisionGuidanceSystem(
-        camera_config=camera_config,
-        target_mode=vision_guide.TargetMode.DOWN,  # 或 TargetMode.FRONT
-        navigation_config=navigation_config,
-        pid_config=pid_config
-    )
+    # # 创建视觉导航系统
+    # vision_system = vision_guide.VisionGuidanceSystem(
+    #     camera_config=camera_config,
+    #     target_mode=vision_guide.TargetMode.DOWN,  # 或 TargetMode.FRONT
+    #     navigation_config=navigation_config,
+    #     pid_config=pid_config
+    # )
 
     await mission.main_mission(drone)
-    await vision_guide.drone_control_loop(vision_system, drone)
-    await asyncio.sleep(2)
+    # await vision_guide.drone_control_loop(vision_system, drone)
+    # await asyncio.sleep(2)
    # ==============================着陆========================================
     print("-- Landing")
-    await ctrl.goto_position_ned(drone, 1.0, 1.0, -0.5, 0.0,10)
-    await ctrl.goto_position_ned(drone, 1.0, 1.0, 0.0, 0.0,5)
+    # await ctrl.goto_position_ned(drone, 1.0, 1.0, -0.5, 0.0,10)
+    # await ctrl.goto_position_ned(drone, 1.0, 1.0, 0.0, 0.0,5)
 
-    await drone.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0))
+    # await drone.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0))
+    '''原来的降落代码
     await drone.action.land()
     async for state in drone.telemetry.landed_state():
         if state == LandedState.ON_GROUND:
             break
-
+    '''
+    #============尝试刹车降落===========
+    for pos
     # ==============================停止offboard模式========================================
     print("-- Stopping offboard")
     try:
