@@ -219,7 +219,7 @@ if __name__ == "__main__":
                     'area': 10000
                 }
             ]
-    
+
     # 示例2: 直接使用可视化器
     def detect_and_visualize(frame, detector):
         # 检测
@@ -238,7 +238,7 @@ if __name__ == "__main__":
         cv2.waitKey(0)
         
         return detections
-    
+
     # 示例3: 使用可视化器类
     def manual_visualize(frame, detector):
         visualizer = DetectionVisualizer(
@@ -256,3 +256,4 @@ if __name__ == "__main__":
         visualizer.display(vis_frame)
         
         return detections
+    

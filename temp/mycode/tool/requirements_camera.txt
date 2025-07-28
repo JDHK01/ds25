@@ -1,0 +1,8 @@
+
+# 摄像头检测工具依赖
+opencv-python>=4.5.0
+
+# Ubuntu系统依赖 (需要手动安装):
+# sudo apt update
+# sudo apt install v4l-utils
+# sudo apt install python3-opencv  # 可选，如果pip安装有问题
