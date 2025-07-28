@@ -119,37 +119,78 @@ class ObjectDetector:
         self.detection_config = detection_config or {}
         self.min_area = self.detection_config.get('min_area', 500)
         
+    # def detect_objects(self, frame: np.ndarray) -> List[Dict]:
+    #     """使用颜色检测目标"""
+    #     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    #     # 红色检测
+    #     lower_red1 = np.array([0, 100, 100])
+    #     upper_red1 = np.array([10, 255, 255])
+    #     lower_red2 = np.array([170, 100, 100])
+    #     upper_red2 = np.array([180, 255, 255])
+    #     mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    #     mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    #     mask = cv2.bitwise_or(mask1, mask2)
+    #     # 形态学处理
+    #     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    #     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    #     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    #     # 查找轮廓
+    #     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    #     detections = []
+    #     for contour in contours:
+    #         area = cv2.contourArea(contour)
+    #         if area > self.min_area:
+    #             x, y, w, h = cv2.boundingRect(contour)
+    #             center_x = x + w // 2
+    #             center_y = y + h // 2
+                
+    #             detections.append({
+    #                 'center': (center_x, center_y),
+    #                 'bbox': (x, y, x + w, y + h),
+    #                 'area': area
+    #             })
+    #     # 返回的是列表, 列表中的每个元素都是字典, 存储每个检测对象的信息:检测的区域, 面积
+    #     return detections
     def detect_objects(self, frame: np.ndarray) -> List[Dict]:
-        """使用颜色检测目标"""
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        # 红色检测
-        lower_red1 = np.array([0, 100, 100])
-        upper_red1 = np.array([10, 255, 255])
-        lower_red2 = np.array([170, 100, 100])
-        upper_red2 = np.array([180, 255, 255])
-        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-        mask = cv2.bitwise_or(mask1, mask2)
-        # 形态学处理
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        # 查找轮廓
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        """检测多个二维码位置"""
+        # 创建二维码检测器
+        qr_detector = cv2.QRCodeDetector()
+        
+        # 转换为灰度图
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
         detections = []
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area > self.min_area:
-                x, y, w, h = cv2.boundingRect(contour)
+        
+        # 检测多个二维码
+        retval, points = qr_detector.detectMulti(gray)
+        
+        if retval and points is not None:
+            for qr_points in points:
+                # 将浮点数转换为整数
+                qr_points = qr_points.astype(int)
+                
+                # 计算边界框
+                x_coords = qr_points[:, 0]
+                y_coords = qr_points[:, 1]
+                x = np.min(x_coords)
+                y = np.min(y_coords)
+                w = np.max(x_coords) - x
+                h = np.max(y_coords) - y
+                
+                # 计算中心点
                 center_x = x + w // 2
                 center_y = y + h // 2
                 
-                detections.append({
-                    'center': (center_x, center_y),
-                    'bbox': (x, y, x + w, y + h),
-                    'area': area
-                })
-        # 返回的是列表, 列表中的每个元素都是字典, 存储每个检测对象的信息:检测的区域, 面积
+                # 计算面积
+                area = w * h
+                
+                if area > self.min_area:
+                    detections.append({
+                        'center': (center_x, center_y),
+                        'bbox': (x, y, x + w, y + h),
+                        'area': area
+                    })
+        
         return detections
 
 # 视觉导航系统
