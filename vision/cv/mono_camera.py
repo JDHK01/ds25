@@ -333,7 +333,8 @@ class VisionGuidanceSystem:
             else:
                 # 在合适距离，考虑前后偏移补偿
                 command.velocity_forward = -self.camera_config.offset_forward * self.offset_compensation_gain
-        
+            # --------------------------------------先不进行前向移动--------------------------------------
+            command.velocity_forward = 0
         # 速度限制
         command.velocity_forward = np.clip(command.velocity_forward, -self.max_velocity, self.max_velocity)
         command.velocity_right = np.clip(command.velocity_right, -self.max_velocity, self.max_velocity)
