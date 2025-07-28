@@ -13,21 +13,20 @@ import asyncio
 from typing import Tuple, Optional, Dict, List
 from dataclasses import dataclass
 from enum import Enum
-
-# 两种导航模式: 枚举类型的类
+# ===============================常量:枚举类型的================================
 class TargetMode(Enum):
     """目标定位模式"""
     DOWN = "down"      # 摄像头向下，垂直对准目标
     FRONT = "front"    # 摄像头向前，水平对准目标
 
-# 任务状态: 枚举类型的类
+
 class TaskState(Enum):
     """任务执行状态"""
     TRACKING = "tracking"      # 跟踪目标中
     APPROACHING = "approaching" # 靠近目标中
     COMPLETED = "completed"    # 跟踪完成
 
-# 相机配置: 存储数据的类
+# =============================变量: 存储数据的类=================================
 @dataclass
 class CameraConfig:
     """相机参数配置"""
@@ -41,8 +40,11 @@ class CameraConfig:
     offset_forward: float = 0.0   # 相机在无人机前方的距离（正值表示在前）
     offset_right: float = 0.0     # 相机在无人机右侧的距离（正值表示在右）
     offset_down: float = 0.0      # 相机在无人机下方的距离（正值表示在下）
+    
+    # 显示配置
+    show_window: bool = True      # 是否显示窗口界面（调试时开启，正式运行时关闭）
 
-# 机体坐标系速度控制指令: 存储数据的类
+
 @dataclass
 class DroneCommand:
     """无人机机体坐标系速度命令"""
@@ -50,10 +52,11 @@ class DroneCommand:
     velocity_right: float = 0.0    # 向右速度 (m/s)
     velocity_down: float = 0.0     # 向下速度 (m/s)
 
-# PID控制器
+
+# ============================真正的类===================================
 class PIDController:
     """PID控制器"""
-    def __init__(self, kp: float = 0.5, ki: float = 0.0, kd: float = 0.1,
+    def __init__(self, kp: float = 0.3, ki: float = 0.0, kd: float = 0.0,
                  output_limit: float = 1.0, integral_limit: float = 5.0):
         self.kp = kp
         self.ki = ki
@@ -103,7 +106,8 @@ class PIDController:
         self.prev_error = 0.0
         self.last_time = None
 
-# 目标检测器
+
+
 class ObjectDetector:
     """简化的目标检测器"""
     def __init__(self, detection_config: dict = None):
@@ -155,8 +159,8 @@ class VisionGuidanceSystem:
                  navigation_config: dict = None, pid_config: dict = None):
         '''
         传入的参数:
-            相机配置参数
             对准模式: 向下, 向前
+            相机配置参数
             导航参数
             pid控制器参数
         '''
@@ -178,7 +182,7 @@ class VisionGuidanceSystem:
         self.alignment_duration = nav_config.get('alignment_duration', 2.0)  # 对准保持时间
         self.completion_tolerance = nav_config.get('completion_tolerance', 15)  # 完成任务的像素容差
         
-        # PID配置: 处理方法同导航参数
+        # PID配置参数: 逐个尝试读取, 没有就赋值
         pid_config = pid_config or {}
         if self.target_mode == TargetMode.DOWN:
             # 摄像头向下模式：控制前后左右
@@ -313,10 +317,8 @@ class VisionGuidanceSystem:
         command = None
         # 检测到物体 -> 选择最大的物体进行跟踪
         if detections:
-            # 选择最大的目标: 暗含了视野中心的问题
+            # 数据预处理, 为跟踪做准备
             best_detection = max(detections, key=lambda d: d['area'])
-        
-            # 检查是否在容差范围内
             center_x, center_y = best_detection['center']
             error_x, error_y = self.compute_pixel_error((center_x, center_y))
             pixel_error = np.sqrt(error_x**2 + error_y**2) * (self.camera_config.width // 2)
@@ -505,7 +507,8 @@ async def drone_control_loop(vision_system: VisionGuidanceSystem, drone):
             frame, command = vision_system.process_frame()
             
             if frame is not None:
-                cv2.imshow("Vision Guidance", frame)
+                if vision_system.camera_config.show_window:
+                    cv2.imshow("Vision Guidance", frame)
                 
                 # 检查任务是否完成
                 if vision_system.is_task_completed():
@@ -544,8 +547,12 @@ async def drone_control_loop(vision_system: VisionGuidanceSystem, drone):
                     )
             
             # 检查退出
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            if vision_system.camera_config.show_window:
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+            else:
+                # 不显示窗口时用简单的睡眠代替
+                pass
                 
             await asyncio.sleep(0.02)  # 50Hz控制频率
             
@@ -578,7 +585,8 @@ async def execute_multi_phase_mission(vision_system: VisionGuidanceSystem, drone
             frame, command = vision_system.process_frame()
             
             if frame is not None:
-                cv2.imshow("Vision Guidance", frame)
+                if vision_system.camera_config.show_window:
+                    cv2.imshow("Vision Guidance", frame)
                 
                 if command is not None:
                     await drone.offboard.set_velocity_body(
@@ -595,8 +603,12 @@ async def execute_multi_phase_mission(vision_system: VisionGuidanceSystem, drone
                 if task_info['state'] == 'approaching':
                     print(f"靠近进度: {task_info.get('approaching_progress', 0)*100:.0f}%")
             
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                return
+            if vision_system.camera_config.show_window:
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    return
+            else:
+                # 不显示窗口时用简单的睡眠代替
+                pass
                 
             await asyncio.sleep(0.02)
         
@@ -623,7 +635,9 @@ if __name__ == "__main__":
         # 相机偏移配置（单位：米）
         offset_forward=0.1,   # 相机在无人机前方10cm
         offset_right=0.0,     # 相机在中心线上
-        offset_down=0.05      # 相机在无人机下方5cm
+        offset_down=0.05,     # 相机在无人机下方5cm
+        # 窗口显示配置
+        show_window=True      # 调试时设为True，正式运行时设为False
     )
     
     # 导航配置
@@ -675,7 +689,8 @@ if __name__ == "__main__":
             frame, command = vision_system.process_frame()
             
             if frame is not None:
-                cv2.imshow("Vision Guidance", frame)
+                if vision_system.camera_config.show_window:
+                    cv2.imshow("Vision Guidance", frame)
                 
                 if command is not None:
                     print(f"命令: 前进={command.velocity_forward:.2f}, "
@@ -695,12 +710,16 @@ if __name__ == "__main__":
                     print("\n任务完成! 可以执行下一阶段任务")
                     print("按 'r' 重置任务继续寻找目标")
             
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
-            elif key == ord('r'):
-                vision_system.reset_task()
-                print("任务已重置")
+            if vision_system.camera_config.show_window:
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    break
+                elif key == ord('r'):
+                    vision_system.reset_task()
+                    print("任务已重置")
+            else:
+                # 不显示窗口时使用简单的退出机制（可以通过其他方式控制）
+                time.sleep(0.02)
                 
     except KeyboardInterrupt:
         print("\n停止...")
@@ -715,30 +734,39 @@ if __name__ == "__main__":
    - offset_right: 相机在无人机右侧的距离（米），正值表示在右
    - offset_down: 相机在无人机下方的距离（米），正值表示在下
 
-2. 偏移补偿工作原理：
+2. 窗口显示配置：
+   - show_window: 控制是否显示窗口界面
+     * True: 显示窗口（适合调试、测试）
+     * False: 不显示窗口（适合正式运行、节省资源）
+   - 配置示例：
+     camera_config = CameraConfig(show_window=False)  # 关闭窗口显示
+
+3. 偏移补偿工作原理：
    - 当目标接近画面中心时（误差<0.1），系统会自动启用偏移补偿
    - 补偿会让无人机的几何中心（而不是相机中心）对准目标
    - 可通过offset_compensation_gain调整补偿强度（0-1）
 
-3. 不同模式下的偏移影响：
+4. 不同模式下的偏移影响：
    - DOWN模式：主要影响水平位置（forward和right偏移）
    - FRONT模式：影响所有三个方向的位置
 
-4. 调试建议：
+5. 调试建议：
+   - 调试时设置 show_window=True 查看实时画面
+   - 正式运行时设置 show_window=False 提高性能
    - 先将偏移设为0进行测试
    - 逐步加入实际偏移值
    - 观察"Offset Compensation: ON"提示来确认补偿是否生效
 
-5. 任务状态管理（简化版）：
+6. 任务状态管理（简化版）：
    - TRACKING: 跟踪目标，调整位置
    - APPROACHING: 靠近目标中（保持位置）
    - COMPLETED: 跟踪完成，可执行下一阶段
 
-6. 任务完成条件：
+7. 任务完成条件：
    - 目标在容差范围内（completion_tolerance）
    - 保持对准状态达到指定时间（alignment_duration）
    
-7. 集成建议：
+8. 集成建议：
    - 使用 is_task_completed() 检查任务是否完成
    - 使用 get_task_info() 获取详细状态信息
    - 使用 reset_task() 重置任务准备新的目标
