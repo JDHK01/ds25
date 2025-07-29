@@ -267,42 +267,82 @@ class QRDetector:
         
     #     return detections
 
+    # def detect_objects(self, frame: np.ndarray) -> List[Dict]:
+    #     """检测图像中红色区域的位置"""
+    #     # 将图像从 BGR 转换到 HSV
+    #     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+    #     # 定义红色的 HSV 范围（红色在HSV中有两个区段）
+    #     lower_red1 = np.array([0, 100, 100])
+    #     upper_red1 = np.array([10, 255, 255])
+    #     lower_red2 = np.array([160, 100, 100])
+    #     upper_red2 = np.array([180, 255, 255])
+
+    #     # 创建两个掩码并合并
+    #     mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    #     mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    #     red_mask = cv2.bitwise_or(mask1, mask2)
+
+    #     # 查找轮廓
+    #     contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    #     detections = []
+
+    #     for cnt in contours:
+    #         area = cv2.contourArea(cnt)
+    #         if area > self.min_area:
+    #             x, y, w, h = cv2.boundingRect(cnt)
+    #             center_x = x + w // 2
+    #             center_y = y + h // 2
+
+    #             detections.append({
+    #                 'center': (center_x, center_y),
+    #                 'bbox': (x, y, x + w, y + h),
+    #                 'area': area
+    #             })
+
+    #     return detections
     def detect_objects(self, frame: np.ndarray) -> List[Dict]:
-        """检测图像中红色区域的位置"""
-        # 将图像从 BGR 转换到 HSV
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-        # 定义红色的 HSV 范围（红色在HSV中有两个区段）
-        lower_red1 = np.array([0, 100, 100])
-        upper_red1 = np.array([10, 255, 255])
-        lower_red2 = np.array([160, 100, 100])
-        upper_red2 = np.array([180, 255, 255])
-
-        # 创建两个掩码并合并
-        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-        red_mask = cv2.bitwise_or(mask1, mask2)
-
-        # 查找轮廓
-        contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
+        """检测多个二维码位置"""
+        # 创建二维码检测器
+        qr_detector = cv2.QRCodeDetector()
+        
+        # 转换为灰度图
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
         detections = []
-
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area > self.min_area:
-                x, y, w, h = cv2.boundingRect(cnt)
+        
+        # 检测多个二维码
+        retval, points = qr_detector.detectMulti(gray)
+        
+        if retval and points is not None:
+            for qr_points in points:
+                # 将浮点数转换为整数
+                qr_points = qr_points.astype(int)
+                
+                # 计算边界框
+                x_coords = qr_points[:, 0]
+                y_coords = qr_points[:, 1]
+                x = np.min(x_coords)
+                y = np.min(y_coords)
+                w = np.max(x_coords) - x
+                h = np.max(y_coords) - y
+                
+                # 计算中心点
                 center_x = x + w // 2
                 center_y = y + h // 2
-
-                detections.append({
-                    'center': (center_x, center_y),
-                    'bbox': (x, y, x + w, y + h),
-                    'area': area
-                })
-
+                
+                # 计算面积
+                area = w * h
+                
+                if area > self.min_area:
+                    detections.append({
+                        'center': (center_x, center_y),
+                        'bbox': (x, y, x + w, y + h),
+                        'area': area
+                    })
+        
         return detections
-
 
 if __name__ == "__main__":
     # 使用

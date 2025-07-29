@@ -67,54 +67,51 @@ async def run():
             within local coordinate system")
     
     #==========================执行飞行任务=================================
-    # await mission.main_mission(drone)
+    await mission.main_mission(drone)
     # ===========================视觉处理==================================
-        # 相机配置
+    # 相机配置
     camera_config = CameraConfig(
         width=640,
         height=480,
         fps=30,
-        device_id=6,  # 根据实际相机调整
+        device_id=7,  # 根据实际相机调整
         # 相机偏移配置（单位：米）
-        offset_forward=0.1,   # 相机在无人机前方10cm
+        offset_forward=0.0,   # 相机在无人机前方10cm
         offset_right=0.0,     # 相机在中心线上
         offset_down=0.05,     # 相机在无人机下方5cm
         # 窗口显示配置
         show_window=False      # 调试时设为True，正式运行时设为False
     )
-    
     # 导航配置
     navigation_config = {
-        'position_tolerance': 20,    # 像素容差
+        'position_tolerance': 100,    # 像素容差
         'min_target_area': 1000,     # 最小目标面积
         'max_velocity': 0.5,         # 最大速度 m/s
         'offset_compensation_gain': 0.3,  # 偏移补偿增益（0-1）
-        'alignment_duration': 2.0,   # 对准保持时间（秒）
-        'completion_tolerance': 15   # 完成任务的像素容差
+        'alignment_duration': 1.0,   # 对准保持时间（秒）
+        'completion_tolerance': 80   # 完成任务的像素容差
     }
-    
     # PID配置
     pid_config = {
         'horizontal': {
-            'kp': 0.5,
+            'kp': 0.1,
             'ki': 0.0,
-            'kd': 0.1,
+            'kd': 0.0,
             'output_limit': 0.5
         },
         'vertical': {
-            'kp': 0.5,
+            'kp': 0.1,
             'ki': 0.0,
-            'kd': 0.1,
+            'kd': 0.0,
             'output_limit': 0.5
         },
         'forward': {
-            'kp': 0.3,
+            'kp': 0.1,
             'ki': 0.0,
             'kd': 0.05,
             'output_limit': 0.3
         }
     }
-    
     # 创建视觉导航系统
     vision_system = VisionGuidanceSystem(
         camera_config=camera_config,
@@ -125,7 +122,10 @@ async def run():
     )
     await drone_control_loop(vision_system, drone)
     # await vision_guide.drone_control_loop(vision_system, drone)
-    # await asyncio.sleep(2)
+    await asyncio.sleep(2)
+    print('任务执行完毕, 准备降落')
+    await ctrl.goto_position_ned(drone, 0.0, 0.0, 0.0, 0.0, 5)
+
    # ==============================着陆========================================
     print("-- Landing")
     # await ctrl.goto_position_ned(drone, 1.0, 1.0, -0.5, 0.0,10)
