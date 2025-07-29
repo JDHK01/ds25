@@ -11,137 +11,61 @@
 import sys
 sys.path.append("/home/by/wrj/mycontrol")
 sys.path.append("/home/by/wrj/vision/cv")
-import control as ctrl
+from flightpath import *
+from control import *
+from mono_camera import *
+from detect_manager import *
+
 import asyncio
 import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from enum import Enum
-from mono_camera import *
 from mavsdk import System
 from mavsdk.offboard import (OffboardError, PositionNedYaw, VelocityBodyYawspeed)
 from mavsdk.telemetry import LandedState
-import mission
 
-# ===============================飞行路径管理================================
-@dataclass
-class Waypoint:
-    """航点数据结构"""
-    north: float
-    east: float
-    down: float
-    yaw: float
-    duration: float
-    name: str = ""
-
-class FlightState(Enum):
-    """飞行状态"""
-    FLYING = "flying"           # 正常飞行
-    VISION_NAVIGATION = "vision" # 视觉导航中
-    PAUSED = "paused"           # 暂停
-    COMPLETED = "completed"     # 完成
-
-class FlightPathManager:
-    """飞行路径管理器"""
-    def __init__(self, waypoints: List[Waypoint]):
-        self.waypoints = waypoints
-        self.current_waypoint_index = 0
-        self.state = FlightState.FLYING
-        self.paused_position = None  # 暂停时的位置
-        self.paused_waypoint_index = None  # 暂停时的航点索引
-        
-    def get_current_waypoint(self) -> Optional[Waypoint]:
-        """获取当前目标航点"""
-        if self.current_waypoint_index < len(self.waypoints):
-            return self.waypoints[self.current_waypoint_index]
-        return None
-    
-    def next_waypoint(self):
-        """移动到下个航点"""
-        if self.current_waypoint_index < len(self.waypoints):
-            self.current_waypoint_index += 1
-    
-    def pause_for_vision_navigation(self, current_position: Tuple[float, float, float, float]):
-        """暂停飞行，准备视觉导航"""
-        self.state = FlightState.VISION_NAVIGATION
-        self.paused_position = current_position
-        self.paused_waypoint_index = self.current_waypoint_index
-        print(f"暂停飞行，当前位置: {current_position}, 当前航点索引: {self.current_waypoint_index}")
-    
-    def resume_flight_path(self):
-        """恢复飞行路径"""
-        self.state = FlightState.FLYING
-        print(f"恢复飞行，返回暂停位置: {self.paused_position}")
-    
-    def is_completed(self) -> bool:
-        """检查是否完成所有航点"""
-        return self.current_waypoint_index >= len(self.waypoints)
-    
-    def get_progress(self) -> str:
-        """获取进度信息"""
-        return f"{self.current_waypoint_index}/{len(self.waypoints)}"
-
-class DetectionManager:
-    """目标检测管理器"""
-    def __init__(self, vision_system: VisionGuidanceSystem):
-        self.vision_system = vision_system
-        self.target_detected = False
-        self.detection_enabled = True
-        
-    async def check_for_targets(self) -> bool:
-        """检查是否有目标"""
-        if not self.detection_enabled:
-            return False
-            
-        frame, command = self.vision_system.process_frame()
-        if frame is not None:
-            # 简单检测：如果有command输出说明检测到目标
-            if command is not None and (
-                abs(command.velocity_forward) > 0.01 or 
-                abs(command.velocity_right) > 0.01 or 
-                abs(command.velocity_down) > 0.01
-            ):
-                if not self.target_detected:
-                    print("🎯 检测到目标！")
-                    self.target_detected = True
-                return True
-        
-        if self.target_detected:
-            print("目标丢失，继续飞行")
-            self.target_detected = False
-        return False
-    
-    def enable_detection(self):
-        """启用目标检测"""
-        self.detection_enabled = True
-    
-    def disable_detection(self):
-        """禁用目标检测"""
-        self.detection_enabled = False
+# async def get_current_position(drone) -> Tuple[float, float, float, float]:
+#     """获取当前位置"""
+    # async for pos_vel_ned in drone.telemetry.position_velocity_ned():
+    #     return (
+    #         pos_vel_ned.position.north_m,
+    #         pos_vel_ned.position.east_m, 
+    #         pos_vel_ned.position.down_m,
+    #         0.0  # yaw暂时设为0
+    #     )
 
 async def get_current_position(drone) -> Tuple[float, float, float, float]:
-    """获取当前位置"""
+    """获取当前位置和yaw角度"""
+    # 先获取yaw角度
+    async for attitude in drone.telemetry.attitude_euler():
+        yaw_deg = attitude.yaw_deg
+        break
+    else:
+        yaw_deg = 0.0
+        
+    # 再获取位置
     async for pos_vel_ned in drone.telemetry.position_velocity_ned():
-        return (
+        # 加入我自己的坐标转换逻辑
+        return mytf(
             pos_vel_ned.position.north_m,
-            pos_vel_ned.position.east_m, 
+            pos_vel_ned.position.east_m,
             pos_vel_ned.position.down_m,
-            0.0  # yaw暂时设为0
+            yaw_deg
         )
 
 async def fly_to_waypoint_with_detection(drone, waypoint: Waypoint, 
                                        detection_manager: DetectionManager,
                                        flight_manager: FlightPathManager) -> bool:
     """飞向航点并同时进行目标检测，返回是否检测到目标"""
-    print(f"🛫 飞向航点: {waypoint.name} ({waypoint.north:.1f}, {waypoint.east:.1f}, {waypoint.down:.1f})")
-    
+    print(f"飞向航点: {waypoint.name} ({waypoint.north:.1f}, {waypoint.east:.1f}, {waypoint.down:.1f})")
     # 设置目标位置
-    await drone.offboard.set_position_ned(
-        PositionNedYaw(waypoint.north, waypoint.east, waypoint.down, waypoint.yaw)
-    )
-    
+    # await drone.offboard.set_position_ned(
+    #     PositionNedYaw(waypoint.north, waypoint.east, waypoint.down, waypoint.yaw)
+    # )
+    await ctrl.goto_position_ned(drone, waypoint.north, waypoint.east, waypoint.down, waypoint.yaw, 10)
     start_time = time.time()
-    
+    # 感觉这里就相当于time.sleep(), 不太确定
     while time.time() - start_time < waypoint.duration:
         # 检查是否检测到目标
         if await detection_manager.check_for_targets():
@@ -150,9 +74,9 @@ async def fly_to_waypoint_with_detection(drone, waypoint: Waypoint,
             flight_manager.pause_for_vision_navigation(current_pos)
             return True
             
-        await asyncio.sleep(0.1)  # 100Hz检测频率
+        await asyncio.sleep(0.05)  # 100Hz检测频率
     
-    print(f"✅ 到达航点: {waypoint.name}")
+    print(f"到达航点: {waypoint.name}")
     return False
 
 async def run():
@@ -243,21 +167,18 @@ async def run():
     
     flight_manager = FlightPathManager(flight_waypoints)
     
-    print(f"🗺️ 飞行路径规划完成，共{len(flight_waypoints)}个航点")
+    print(f"飞行路径规划完成，共{len(flight_waypoints)}个航点")
     
     # ==================== 主飞行循环 ====================
     while not flight_manager.is_completed():
         current_waypoint = flight_manager.get_current_waypoint()
         if current_waypoint is None:
             break
-            
         print(f"📍 进度: {flight_manager.get_progress()}")
-        
         # 飞向航点并检测目标
         target_detected = await fly_to_waypoint_with_detection(
             drone, current_waypoint, detection_manager, flight_manager
         )
-        
         if target_detected:
             # ========== 目标检测到，开始视觉导航 ==========
             print("🎯 开始视觉导航...")
@@ -271,13 +192,13 @@ async def run():
             # 恢复到暂停位置
             if flight_manager.paused_position:
                 print(f"🔄 返回暂停位置: {flight_manager.paused_position}")
-                await ctrl.goto_position_ned(
+                await goto_position_ned(
                     drone, 
                     flight_manager.paused_position[0],
                     flight_manager.paused_position[1], 
                     flight_manager.paused_position[2],
                     flight_manager.paused_position[3], 
-                    3.0
+                    5.0
                 )
             
             # 恢复状态
@@ -312,7 +233,6 @@ async def run():
     # 清理资源
     vision_system.cleanup()
     print("🎉 任务完成！")
-
 
 if __name__ == "__main__":
     

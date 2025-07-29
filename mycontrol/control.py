@@ -1,11 +1,6 @@
 import asyncio
 from mavsdk.offboard import PositionNedYaw, VelocityBodyYawspeed
 
-def euclidean_distance(x, y, z):
-    """
-    计算欧氏距离
-    """
-    return (x**2 + y**2 + z**2) ** 0.5
 #位置控制
 async def goto_position_ned(drone, north, east, down, yaw,duiration):
     """
@@ -19,3 +14,11 @@ async def goto_position_ned(drone, north, east, down, yaw,duiration):
     await drone.offboard.set_position_ned(PositionNedYaw(tf_n, tf_e, down, yaw+90.0))
     await asyncio.sleep(duiration)
     print("到达目标位置")
+
+async def mytf((in_pos_n,in_pos_e,in_pos_d, in_yaw)):
+    #in 是从无人机读取的ned，out是转换后的ned（前右下）
+    out_pos_n = in_pos_e
+    out_pos_e = -in_pos_n
+    out_pos_d = in_pos_d
+    out_yaw = in_yaw - 90.0
+    return (out_pos_n, out_pos_e, out_pos_d, out_yaw)
