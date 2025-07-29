@@ -35,6 +35,7 @@ from mavsdk.telemetry import LandedState
     #         0.0  # yaw暂时设为0
     #     )
 
+# 读取当前位置
 async def get_current_position(drone) -> Tuple[float, float, float, float]:
     """获取当前位置和yaw角度"""
     # 先获取yaw角度
@@ -54,6 +55,7 @@ async def get_current_position(drone) -> Tuple[float, float, float, float]:
             yaw_deg
         )
 
+# 边飞边检测
 async def fly_to_waypoint_with_detection(drone, waypoint: Waypoint, 
                                        detection_manager: DetectionManager,
                                        flight_manager: FlightPathManager) -> bool:
@@ -63,7 +65,8 @@ async def fly_to_waypoint_with_detection(drone, waypoint: Waypoint,
     # await drone.offboard.set_position_ned(
     #     PositionNedYaw(waypoint.north, waypoint.east, waypoint.down, waypoint.yaw)
     # )
-    await ctrl.goto_position_ned(drone, waypoint.north, waypoint.east, waypoint.down, waypoint.yaw, 10)
+    # 只发点, 不sleep
+    await goto_position_ned(drone, waypoint.north, waypoint.east, waypoint.down, waypoint.yaw, 0)
     start_time = time.time()
     # 感觉这里就相当于time.sleep(), 不太确定
     while time.time() - start_time < waypoint.duration:
@@ -72,13 +75,20 @@ async def fly_to_waypoint_with_detection(drone, waypoint: Waypoint,
             # 获取当前位置并暂停飞行
             current_pos = await get_current_position(drone)
             flight_manager.pause_for_vision_navigation(current_pos)
+            await goto_position_ned(
+                drone, 
+                flight_manager.paused_position[0],
+                flight_manager.paused_position[1], 
+                flight_manager.paused_position[2],
+                flight_manager.paused_position[3], 
+                0.0
+            )
             return True
-            
-        await asyncio.sleep(0.05)  # 100Hz检测频率
-    
+        await asyncio.sleep(0.05)  # 20Hz检测频率
     print(f"到达航点: {waypoint.name}")
     return False
 
+# 运行
 async def run():
     """边飞行边检测的主函数"""
     # ==================== 无人机初始化 ====================
@@ -119,7 +129,7 @@ async def run():
         width=640,
         height=480,
         fps=30,
-        device_id=7,
+        device_id=0,
         offset_forward=0.0,
         offset_right=0.0,
         offset_down=0.05,
@@ -131,8 +141,8 @@ async def run():
         'position_tolerance': 100,
         'min_target_area': 1000,
         'max_velocity': 0.5,
-        'offset_compensation_gain': 0.3,
-        'alignment_duration': 1.0,
+        'offset_compensation_gain': 0.6,
+        'alignment_duration': 0.5,
         'completion_tolerance': 80
     }
     
@@ -156,13 +166,11 @@ async def run():
     
     # ==================== 定义飞行路径 ====================
     flight_waypoints = [
-        Waypoint(0.0, 0.0, -1.3, 0.0, 8.0, "起飞点"),
-        Waypoint(2.0, 0.0, -1.3, 0.0, 8.0, "前进2米"),
-        Waypoint(2.0, 2.0, -1.3, 0.0, 8.0, "右转2米"),
-        Waypoint(0.0, 2.0, -1.3, 0.0, 8.0, "后退2米"),
-        Waypoint(0.0, 0.0, -1.3, 0.0, 8.0, "回到原点"),
-        Waypoint(0.0, 0.0, -0.5, 0.0, 5.0, "降低高度"),
-        Waypoint(0.0, 0.0, 0.0, 0.0, 5.0, "准备降落")
+        Waypoint(0.0, 0.0, -1.3, 0.0, 10.0, "起飞"),
+        Waypoint(0.0, 0.0, -0.3, 0.0, 5.0, "下降到0.3"),
+        Waypoint(1.0, 0.0, -0.3, 0.0, 5.0, "向前1米"),
+        Waypoint(1.0, 1.0, -0.3, 0.0, 8.0, "向右1米"),
+        Waypoint(1.0, 1.0, 0.0, 0.0, 5.0, "降落")
     ]
     
     flight_manager = FlightPathManager(flight_waypoints)
@@ -174,7 +182,7 @@ async def run():
         current_waypoint = flight_manager.get_current_waypoint()
         if current_waypoint is None:
             break
-        print(f"📍 进度: {flight_manager.get_progress()}")
+        print(f"进度: {flight_manager.get_progress()}")
         # 飞向航点并检测目标
         target_detected = await fly_to_waypoint_with_detection(
             drone, current_waypoint, detection_manager, flight_manager
@@ -200,13 +208,11 @@ async def run():
                     flight_manager.paused_position[3], 
                     5.0
                 )
-            
             # 恢复状态
             flight_manager.resume_flight_path()
             detection_manager.enable_detection()
             vision_system.reset_task()  # 重置视觉系统
-            
-            # 继续当前航点（因为之前被中断了）
+            # 继续当前航点
             continue
         else:
             # 正常到达航点，移动到下一个
@@ -217,9 +223,9 @@ async def run():
     # ==================== 降落 ====================
     print("🛬 开始降落...")
     
-    # 高度低于0.2米时kill
+    # 高度低于0.05米时kill, 平时少摔一些
     async for pos_vel_ned in drone.telemetry.position_velocity_ned():
-        if -pos_vel_ned.position.down_m < 0.2:
+        if -pos_vel_ned.position.down_m < 0.05:
             await drone.action.kill()
             break
     
@@ -235,7 +241,5 @@ async def run():
     print("🎉 任务完成！")
 
 if __name__ == "__main__":
-    
-    
     # Run the asyncio loop
     asyncio.run(run())
