@@ -183,68 +183,81 @@ async def run():
     
     print(f"飞行路径规划完成，共{len(flight_waypoints)}个航点")
     
-    # ==================== 主飞行循环 ====================
-    while not flight_manager.is_completed():
-        current_waypoint = flight_manager.get_current_waypoint()
-        if current_waypoint is None:
-            break
-        print(f"进度: {flight_manager.get_progress()}")
-        # 飞向航点并检测目标
-        target_detected = await fly_to_waypoint_with_detection(
-            drone, current_waypoint, detection_manager, flight_manager
-        )
-        if target_detected:
-            # ========== 目标检测到，开始视觉导航 ==========
-            print("🎯 开始视觉导航...")
-            detection_manager.disable_detection()  # 暂停检测
-            
-            # 执行视觉导航
-            await drone_control_loop(vision_system, drone)
-            
-            print("✅ 视觉导航完成，恢复飞行路径")
-            
-            # 恢复到暂停位置
-            if flight_manager.paused_position:
-                print(f"🔄 返回暂停位置: {flight_manager.paused_position}")
-                await goto_position_ned(
-                    drone, 
-                    flight_manager.paused_position[0],
-                    flight_manager.paused_position[1], 
-                    flight_manager.paused_position[2],
-                    flight_manager.paused_position[3], 
-                    5.0
-                )
-            # 恢复状态
-            flight_manager.resume_flight_path()
-            detection_manager.enable_detection()
-            vision_system.reset_task()  # 重置视觉系统
-            # 继续当前航点
-            continue
-        else:
-            # 正常到达航点，移动到下一个
-            flight_manager.next_waypoint()
-    
-    print("🏁 所有航点飞行完成")
-    
-    # ==================== 降落 ====================
-    print("🛬 开始降落...")
-    
-    # 高度低于0.5米时kill, 平时少摔一些
-    async for pos_vel_ned in drone.telemetry.position_velocity_ned():
-        if -pos_vel_ned.position.down_m < 0.05:
-            await drone.action.kill()
-            break
-    
-    # 停止offboard模式
-    print("-- Stopping offboard")
     try:
-        await drone.offboard.stop()
-    except Exception as error:
-        print(f"Stopping offboard mode failed with error: {error}")
-    
-    # 清理资源
-    vision_system.cleanup()
-    print("🎉 任务完成！")
+        # ==================== 主飞行循环 ====================
+        while not flight_manager.is_completed():
+            current_waypoint = flight_manager.get_current_waypoint()
+            if current_waypoint is None:
+                break
+            print(f"进度: {flight_manager.get_progress()}")
+            # 飞向航点并检测目标
+            target_detected = await fly_to_waypoint_with_detection(
+                drone, current_waypoint, detection_manager, flight_manager
+            )
+            if target_detected:
+                # ========== 目标检测到，开始视觉导航 ==========
+                print("🎯 开始视觉导航...")
+                detection_manager.disable_detection()  # 暂停检测
+                
+                # 执行视觉导航
+                await drone_control_loop(vision_system, drone)
+                
+                print("✅ 视觉导航完成，恢复飞行路径")
+                
+                # 恢复到暂停位置
+                if flight_manager.paused_position:
+                    print(f"🔄 返回暂停位置: {flight_manager.paused_position}")
+                    await goto_position_ned(
+                        drone, 
+                        flight_manager.paused_position[0],
+                        flight_manager.paused_position[1], 
+                        flight_manager.paused_position[2],
+                        flight_manager.paused_position[3], 
+                        5.0
+                    )
+                # 恢复状态
+                flight_manager.resume_flight_path()
+                detection_manager.enable_detection()
+                vision_system.reset_task()  # 重置视觉系统
+                # 继续当前航点
+                continue
+            else:
+                # 正常到达航点，移动到下一个
+                flight_manager.next_waypoint()
+        
+        print("🏁 所有航点飞行完成")
+        
+    except Exception as e:
+        print(f"❌ 飞行过程中发生异常: {e}")
+        
+    finally:
+        # ==================== 安全降落和清理 ====================
+        print("🛬 执行安全降落和清理...")
+        
+        try:
+            # 高度低于0.5米时kill, 平时少摔一些
+            async for pos_vel_ned in drone.telemetry.position_velocity_ned():
+                if -pos_vel_ned.position.down_m < 0.05:
+                    await drone.action.kill()
+                    break
+        except Exception as e:
+            print(f"降落过程中出现错误: {e}")
+        
+        try:
+            # 停止offboard模式
+            print("-- Stopping offboard")
+            await drone.offboard.stop()
+        except Exception as e:
+            print(f"停止offboard模式失败: {e}")
+        
+        try:
+            # 清理资源
+            vision_system.cleanup()
+            print("✅ 资源清理完成")
+        except Exception as e:
+            print(f"资源清理失败: {e}")
+        
+        print("🎉 任务完成！")
 
 if __name__ == "__main__":
     # Run the asyncio loop
