@@ -70,19 +70,23 @@ async def fly_to_waypoint_with_detection(drone, waypoint: Waypoint,
     start_time = time.time()
     # 感觉这里就相当于time.sleep(), 不太确定
     while time.time() - start_time < waypoint.duration:
-        # 检查是否检测到目标
-        if await detection_manager.check_for_targets():
-            # 获取当前位置并暂停飞行
-            current_pos = await get_current_position(drone)
+        # 获取当前位置用于检测
+        current_pos = await get_current_position(drone)
+        # 检查是否检测到目标，传入当前位置
+        if await detection_manager.check_for_targets(current_pos):
+            # 暂停飞行(改为机体坐标系控制)
             flight_manager.pause_for_vision_navigation(current_pos)
-            await goto_position_ned(
-                drone, 
-                flight_manager.paused_position[0],
-                flight_manager.paused_position[1], 
-                flight_manager.paused_position[2],
-                flight_manager.paused_position[3], 
-                0.0
+            await drone.offboard.set_velocity_body(
+                VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0)
             )
+            # await goto_position_ned(
+            #     drone, 
+            #     flight_manager.paused_position[0],
+            #     flight_manager.paused_position[1], 
+            #     flight_manager.paused_position[2],
+            #     flight_manager.paused_position[3], 
+            #     0.0
+            # )
             return True
         await asyncio.sleep(0.05)  # 20Hz检测频率
     print(f"到达航点: {waypoint.name}")
@@ -156,13 +160,15 @@ async def run():
     # 创建视觉导航系统
     vision_system = VisionGuidanceSystem(
         camera_config=camera_config,
-        target_mode=TargetMode.FRONT,
+        target_mode=TargetMode.DOWN,
         navigation_config=navigation_config,
         pid_config=pid_config
     )
     
     # 创建管理器
     detection_manager = DetectionManager(vision_system)
+    detection_manager.position_tolerance = 1.0  # 设置位置容差为1.5米
+    detection_manager.clear_detected_positions()  # 清空之前的检测记录
     
     # ==================== 定义飞行路径 ====================
     flight_waypoints = [
@@ -223,7 +229,7 @@ async def run():
     # ==================== 降落 ====================
     print("🛬 开始降落...")
     
-    # 高度低于0.05米时kill, 平时少摔一些
+    # 高度低于0.5米时kill, 平时少摔一些
     async for pos_vel_ned in drone.telemetry.position_velocity_ned():
         if -pos_vel_ned.position.down_m < 0.05:
             await drone.action.kill()
