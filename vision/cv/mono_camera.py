@@ -544,9 +544,20 @@ class VisionGuidanceSystem:
 
 # 异步无人机控制示例
 async def drone_control_loop(vision_system: VisionGuidanceSystem, drone):
-    """异步无人机控制循环"""
+    """异步无人机控制循环（带2秒超时）"""
+    start_time = time.time()
+    timeout_duration = 2.0
+    
     try:        
         while True:
+            # 检查超时
+            if time.time() - start_time >= timeout_duration:
+                print(f"跟踪超时 ({timeout_duration}秒)，退出函数")
+                # 发送停止命令
+                await drone.offboard.set_velocity_body(
+                    VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0)
+                )
+                return
             frame, command = vision_system.process_frame()
             if frame is not None:
                 if vision_system.camera_config.show_window:
@@ -576,12 +587,17 @@ async def drone_control_loop(vision_system: VisionGuidanceSystem, drone):
                             0.0  # 不调整偏航
                         )
                     )
-                    print(f"v_x:{command.velocity_forward},v_y{command.velocity_right},v_z{command.velocity_down}")
+                    # 格式化输出时间和速度信息
+                    elapsed_time = time.time() - start_time
+                    print(f"[{elapsed_time:6.2f}s] 前进:{command.velocity_forward:+6.3f} 右移:{command.velocity_right:+6.3f} 下降:{command.velocity_down:+6.3f}")
                 else:
                     # 悬停
                     await drone.offboard.set_velocity_body(
                         VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0)
-                    )   
+                    )
+                    # 悬停时也输出信息
+                    elapsed_time = time.time() - start_time
+                    print(f"[{elapsed_time:6.2f}s] 前进:{0.0:+6.3f} 右移:{0.0:+6.3f} 下降:{0.0:+6.3f} [悬停]")   
             # 检查退出
             if vision_system.camera_config.show_window:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -600,7 +616,7 @@ async def drone_control_loop(vision_system: VisionGuidanceSystem, drone):
 
 # 高级任务执行示例
 async def execute_multi_phase_mission(vision_system: VisionGuidanceSystem, drone):
-    """执行多阶段任务示例"""
+    """执行多阶段任务示例（带2秒超时）"""
     phases = [
         {"name": "寻找红色目标", "mode": TargetMode.DOWN, "next_action": "hover"},
         {"name": "接近蓝色标记", "mode": TargetMode.FRONT, "next_action": "land"}
@@ -613,8 +629,20 @@ async def execute_multi_phase_mission(vision_system: VisionGuidanceSystem, drone
         vision_system.target_mode = phase['mode']
         vision_system.reset_task()
         
+        # 每个阶段2秒超时
+        phase_start_time = time.time()
+        timeout_duration = 2.0
+        
         # 执行视觉导航
         while not vision_system.is_task_completed():
+            # 检查阶段超时
+            if time.time() - phase_start_time >= timeout_duration:
+                print(f"阶段 '{phase['name']}' 超时 ({timeout_duration}秒)，退出")
+                # 发送停止命令
+                await drone.offboard.set_velocity_body(
+                    VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0)
+                )
+                return
             frame, command = vision_system.process_frame()
             
             if frame is not None:
@@ -630,6 +658,13 @@ async def execute_multi_phase_mission(vision_system: VisionGuidanceSystem, drone
                             0.0
                         )
                     )
+                    # 格式化输出时间和速度信息
+                    elapsed_time = time.time() - phase_start_time
+                    print(f"[{elapsed_time:6.2f}s] 前进:{command.velocity_forward:+6.3f} 右移:{command.velocity_right:+6.3f} 下降:{command.velocity_down:+6.3f}")
+                else:
+                    # 悬停时也输出信息
+                    elapsed_time = time.time() - phase_start_time
+                    print(f"[{elapsed_time:6.2f}s] 前进:{0.0:+6.3f} 右移:{0.0:+6.3f} 下降:{0.0:+6.3f} [悬停]")
                 
                 # 获取任务状态信息
                 task_info = vision_system.get_task_info()
@@ -713,12 +748,21 @@ if __name__ == "__main__":
         pid_config=pid_config
     )
     
-    # 测试运行（无无人机连接）
+    # 测试运行（无无人机连接，带2秒超时）
     try:
         print("开始视觉导航测试...")
         print("按 'q' 退出, 按 'r' 重置任务")
+        print("注意：函数将在2秒后自动退出")
+        
+        # 添加2秒超时
+        test_start_time = time.time()
+        timeout_duration = 2.0
         
         while True:
+            # 检查超时
+            if time.time() - test_start_time >= timeout_duration:
+                print(f"\n测试超时 ({timeout_duration}秒)，自动退出")
+                break
             frame, command = vision_system.process_frame()
             
             if frame is not None:
@@ -726,9 +770,13 @@ if __name__ == "__main__":
                     cv2.imshow("Vision Guidance", frame)
                 
                 if command is not None:
-                    print(f"命令: 前进={command.velocity_forward:.2f}, "
-                          f"右移={command.velocity_right:.2f}, "
-                          f"下降={command.velocity_down:.2f}")
+                    # 格式化输出时间和速度信息
+                    elapsed_time = time.time() - test_start_time
+                    print(f"[{elapsed_time:6.2f}s] 前进:{command.velocity_forward:+6.3f} 右移:{command.velocity_right:+6.3f} 下降:{command.velocity_down:+6.3f}")
+                else:
+                    # 无命令时也输出信息
+                    elapsed_time = time.time() - test_start_time
+                    print(f"[{elapsed_time:6.2f}s] 前进:{0.0:+6.3f} 右移:{0.0:+6.3f} 下降:{0.0:+6.3f} [无命令]")
                 
                 # 显示任务状态
                 task_info = vision_system.get_task_info()
