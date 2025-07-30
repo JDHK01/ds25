@@ -229,7 +229,7 @@ class GroundStation(QMainWindow):
     def init_ui(self):
         """初始化UI界面"""
         self.setWindowTitle("野生动物巡查系统 - 地面站")
-        self.setGeometry(100, 100, 900, 600)
+        self.setGeometry(100, 100, 720, 576)
         
         # 中心部件
         central_widget = QWidget()
