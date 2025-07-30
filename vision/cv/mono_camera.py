@@ -3,7 +3,7 @@
 室内无人机视觉导航系统
 - 纯视觉反馈
 - 基于机体坐标系控制
-- 两种模式：摄像头向下垂直对准，摄像头向前水平对准
+- 摄像头向下垂直对准目标
 """
 
 import cv2
@@ -21,7 +21,6 @@ from mavsdk.telemetry import LandedState
 class TargetMode(Enum):
     """目标定位模式"""
     DOWN = "down"      # 摄像头向下，垂直对准目标
-    FRONT = "front"    # 摄像头向前，水平对准目标
 
 
 class TaskState(Enum):
@@ -230,16 +229,10 @@ class VisionGuidanceSystem:
         
         # PID配置参数: 逐个尝试读取, 没有就赋值
         pid_config = pid_config or {}
-        if self.target_mode == TargetMode.DOWN:
-            # 摄像头向下模式：控制前后左右
-            self.pid_x = PIDController(**pid_config.get('horizontal', {}))
-            self.pid_y = PIDController(**pid_config.get('horizontal', {}))
-            self.pid_z = None  # 不需要高度控制
-        else:  # FRONT模式
-            # 摄像头向前模式：控制左右上下
-            self.pid_x = PIDController(**pid_config.get('horizontal', {}))
-            self.pid_y = PIDController(**pid_config.get('vertical', {}))
-            self.pid_z = PIDController(**pid_config.get('forward', {}))
+        # 摄像头向下模式：控制前后左右
+        self.pid_x = PIDController(**pid_config.get('horizontal', {}))
+        self.pid_y = PIDController(**pid_config.get('horizontal', {}))
+        self.pid_z = None  # 不需要高度控制
         
         # 跟踪状态
         self.task_state = TaskState.TRACKING
@@ -276,70 +269,34 @@ class VisionGuidanceSystem:
         
         command = DroneCommand()
         
-        if self.target_mode == TargetMode.DOWN:
-            # 摄像头向下：误差映射到前后左右运动
-            # 需要补偿水平偏移
+        # 摄像头向下：误差映射到前后左右运动
+        # 需要补偿水平偏移
+        
+        # 基础控制量
+        '''
+        非常重要的转换:
+            假设物体在画面左侧, error_x < 0, 需要左移, 已经对齐
+            假设物体在画面上方, error_y < 0, 需要前移动, 未对齐
+        '''
+        base_right = self.pid_x.compute(error_x)
+        base_forward = -self.pid_y.compute(error_y)  # y轴反向
+        
+        # 偏移补偿
+        # 当目标在画面中心时，无人机需要移动到让其中心对准目标
+        # 考虑相机偏移：如果相机在无人机前方，需要额外后退
+        
+        # 判断是否接近目标中心
+        if abs(error_x) < 0.1 and abs(error_y) < 0.1:
+            # 接近中心时，加入偏移补偿
+            command.velocity_forward = base_forward - self.camera_config.offset_forward * self.offset_compensation_gain
+            command.velocity_right = base_right - self.camera_config.offset_right * self.offset_compensation_gain
+        else:
+            # 远离中心时，正常控制
+            command.velocity_forward = base_forward
+            command.velocity_right = base_right
+        
+        command.velocity_down = 0.0
             
-            # 基础控制量
-            '''
-            非常重要的转换:
-                假设物体在画面左侧, error_x < 0, 需要左移, 已经对齐
-                假设物体在画面上方, error_y < 0, 需要前移动, 未对齐
-            '''
-            base_right = self.pid_x.compute(error_x)
-            base_forward = -self.pid_y.compute(error_y)  # y轴反向
-            
-            # 偏移补偿
-            # 当目标在画面中心时，无人机需要移动到让其中心对准目标
-            # 考虑相机偏移：如果相机在无人机前方，需要额外后退
-            
-            # 判断是否接近目标中心
-            if abs(error_x) < 0.1 and abs(error_y) < 0.1:
-                # 接近中心时，加入偏移补偿
-                command.velocity_forward = base_forward - self.camera_config.offset_forward * self.offset_compensation_gain
-                command.velocity_right = base_right - self.camera_config.offset_right * self.offset_compensation_gain
-            else:
-                # 远离中心时，正常控制
-                command.velocity_forward = base_forward
-                command.velocity_right = base_right
-            
-            command.velocity_down = 0.0
-            
-        else:  # FRONT模式
-            # 摄像头向前：误差映射到左右上下运动
-            # 画面x轴误差 -> 机体右移
-            # 画面y轴误差 -> 机体下移
-            
-            # 基础控制量
-            '''
-            非常重要的转换:
-                假设物体在画面左侧, error_x < 0, 需要左移, 已经对齐
-                假设物体在画面上方, error_y < 0, 需要上移, 已经对齐
-            '''
-            base_right = self.pid_x.compute(error_x)
-            base_down = self.pid_y.compute(error_y)
-            
-            # 偏移补偿（主要是左右和上下）
-            if abs(error_x) < 0.1 and abs(error_y) < 0.1:
-                command.velocity_right = base_right - self.camera_config.offset_right * self.offset_compensation_gain
-                command.velocity_down = base_down - self.camera_config.offset_down * self.offset_compensation_gain
-            else:
-                command.velocity_right = base_right
-                command.velocity_down = base_down
-            
-            # 前进速度基于目标大小（简单的距离估计）
-            target_area = detection['area']
-            if target_area < self.min_target_area * 2:
-                # 目标太小，向前飞
-                command.velocity_forward = self.pid_z.compute(-1.0)
-            elif target_area > self.min_target_area * 4:
-                # 目标太大，后退
-                command.velocity_forward = self.pid_z.compute(1.0)
-            else:
-                # 在合适距离，考虑前后偏移补偿
-                command.velocity_forward = -self.camera_config.offset_forward * self.offset_compensation_gain
-            # --------------------------------------先不进行前向移动--------------------------------------
-            command.velocity_forward = 0
         # 速度限制
         command.velocity_forward = np.clip(command.velocity_forward, -self.max_velocity, self.max_velocity)
         command.velocity_right = np.clip(command.velocity_right, -self.max_velocity, self.max_velocity)
@@ -417,8 +374,6 @@ class VisionGuidanceSystem:
                     # 重置PID控制器
                     self.pid_x.reset()
                     self.pid_y.reset()
-                    if self.pid_z:
-                        self.pid_z.reset()
         
         # 绘制状态信息
         self._draw_status(frame)
@@ -517,8 +472,6 @@ class VisionGuidanceSystem:
         self.is_tracking = False
         self.pid_x.reset()
         self.pid_y.reset()
-        if self.pid_z:
-            self.pid_z.reset()
         print("任务状态已重置")
     
     def get_task_info(self) -> Dict:
@@ -618,8 +571,8 @@ async def drone_control_loop(vision_system: VisionGuidanceSystem, drone):
 async def execute_multi_phase_mission(vision_system: VisionGuidanceSystem, drone):
     """执行多阶段任务示例（带2秒超时）"""
     phases = [
-        {"name": "寻找红色目标", "mode": TargetMode.DOWN, "next_action": "hover"},
-        {"name": "接近蓝色标记", "mode": TargetMode.FRONT, "next_action": "land"}
+        {"name": "寻找目标", "mode": TargetMode.DOWN, "next_action": "hover"},
+        {"name": "接近目标", "mode": TargetMode.DOWN, "next_action": "land"}
     ]
     
     for phase in phases:
@@ -743,7 +696,7 @@ if __name__ == "__main__":
     # 创建视觉导航系统
     vision_system = VisionGuidanceSystem(
         camera_config=camera_config,
-        target_mode=TargetMode.DOWN,  # 或 TargetMode.FRONT
+        target_mode=TargetMode.DOWN,
         navigation_config=navigation_config,
         pid_config=pid_config
     )
@@ -827,27 +780,23 @@ if __name__ == "__main__":
    - 补偿会让无人机的几何中心（而不是相机中心）对准目标
    - 可通过offset_compensation_gain调整补偿强度（0-1）
 
-4. 不同模式下的偏移影响：
-   - DOWN模式：主要影响水平位置（forward和right偏移）
-   - FRONT模式：影响所有三个方向的位置
-
-5. 调试建议：
+4. 调试建议：
    - 调试时设置 show_window=True 查看实时画面
    - 正式运行时设置 show_window=False 提高性能
    - 先将偏移设为0进行测试
    - 逐步加入实际偏移值
    - 观察"Offset Compensation: ON"提示来确认补偿是否生效
 
-6. 任务状态管理（简化版）：
+5. 任务状态管理（简化版）：
    - TRACKING: 跟踪目标，调整位置
    - APPROACHING: 靠近目标中（保持位置）
    - COMPLETED: 跟踪完成，可执行下一阶段
 
-7. 任务完成条件：
+6. 任务完成条件：
    - 目标在容差范围内（completion_tolerance）
    - 保持对准状态达到指定时间（alignment_duration）
    
-8. 集成建议：
+7. 集成建议：
    - 使用 is_task_completed() 检查任务是否完成
    - 使用 get_task_info() 获取详细状态信息
    - 使用 reset_task() 重置任务准备新的目标
