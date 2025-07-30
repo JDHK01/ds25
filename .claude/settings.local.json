@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(ls -la /Users/yqz/by/wrj/)"
     ],
     "deny": []
   }

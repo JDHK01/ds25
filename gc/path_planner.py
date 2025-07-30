@@ -1,346 +1,421 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from matplotlib.patches import FancyArrowPatch
 from collections import deque
-import copy
+import random
+import time
 
-class GridPathPlanner:
-    def __init__(self, width=9, height=7):
-        self.width = width  # A1-A9
-        self.height = height  # B1-B7
-        self.grid = np.zeros((height, width))
-        self.no_fly_zones = set()
-        self.start_pos = (0, 8)  # A9B1 -> (row=0, col=8)
-        self.visited = set()
+class AdvancedWildlifePatrolSystem:
+    def __init__(self):
+        self.rows = 7
+        self.cols = 9
+        self.grid = np.zeros((self.rows, self.cols))
+        self.forbidden_zones = []
         self.path = []
+        self.start_pos = (8, 0)  # A9B1
+        self.all_paths = []  # 存储多条路径用于比较
         
-    def add_no_fly_zone(self, col_letter, row_num):
-        """Add a no-fly zone at specified position (e.g., 'A', 1)"""
-        col = ord(col_letter.upper()) - ord('A')
-        row = row_num - 1
-        if 0 <= col < self.width and 0 <= row < self.height:
-            self.no_fly_zones.add((row, col))
-            self.grid[row, col] = -1
-    
-    def add_consecutive_no_fly_zones(self, positions):
-        """Add multiple consecutive no-fly zones
-        Args:
-            positions: List of (col_letter, row_num) tuples
-        """
-        for col_letter, row_num in positions:
-            self.add_no_fly_zone(col_letter, row_num)
-    
-    def create_example_consecutive_zones(self, pattern='horizontal'):
-        """Create example patterns of 3 consecutive no-fly zones"""
-        self.no_fly_zones.clear()
-        self.grid = np.zeros((self.height, self.width))
+    def set_forbidden_zone(self, start_col, start_row, shape='horizontal'):
+        """设置禁飞区"""
+        self.forbidden_zones = []
+        self.grid = np.zeros((self.rows, self.cols))
         
-        if pattern == 'horizontal':
-            # Horizontal line of 3 zones in middle
-            self.add_consecutive_no_fly_zones([('D', 4), ('E', 4), ('F', 4)])
-        elif pattern == 'vertical':
-            # Vertical line of 3 zones
-            self.add_consecutive_no_fly_zones([('E', 3), ('E', 4), ('E', 5)])
-        elif pattern == 'L_shape':
-            # L-shaped pattern
-            self.add_consecutive_no_fly_zones([('D', 4), ('E', 4), ('E', 5)])
-        elif pattern == 'diagonal':
-            # Diagonal pattern
-            self.add_consecutive_no_fly_zones([('C', 3), ('D', 4), ('E', 5)])
-        else:
-            # Default: corner block
-            self.add_consecutive_no_fly_zones([('C', 2), ('C', 3), ('D', 3)])
+        if shape == 'horizontal' and start_col <= 6:
+            for i in range(3):
+                self.forbidden_zones.append((start_col + i, start_row))
+                self.grid[start_row, start_col + i] = 1
+        elif shape == 'vertical' and start_row <= 4:
+            for i in range(3):
+                self.forbidden_zones.append((start_col, start_row + i))
+                self.grid[start_row + i, start_col] = 1
     
-    def is_valid_move(self, row, col):
-        """Check if move is valid (within bounds and not a no-fly zone)"""
-        return (0 <= row < self.height and 
-                0 <= col < self.width and 
-                (row, col) not in self.no_fly_zones)
+    def get_accessible_points(self):
+        """获取所有可访问的点"""
+        points = []
+        for row in range(self.rows):
+            for col in range(self.cols):
+                if self.grid[row, col] == 0:
+                    points.append((col, row))
+        return points
     
-    def get_neighbors(self, row, col):
-        """Get valid neighboring positions"""
+    def get_neighbors(self, pos):
+        """获取某个位置的有效邻居"""
+        col, row = pos
         neighbors = []
-        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # up, down, left, right
+        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
         
-        for dr, dc in directions:
-            new_row, new_col = row + dr, col + dc
-            if self.is_valid_move(new_row, new_col):
-                neighbors.append((new_row, new_col))
+        for dx, dy in directions:
+            new_col, new_row = col + dx, row + dy
+            if (0 <= new_col < self.cols and 
+                0 <= new_row < self.rows and 
+                self.grid[new_row, new_col] == 0):
+                neighbors.append((new_col, new_row))
+        
         return neighbors
     
-    def find_path_dfs(self, current_pos=None, path=None, visited=None):
-        """Find path using DFS to minimize repeated visits"""
-        if current_pos is None:
-            current_pos = self.start_pos
-        if path is None:
-            path = [current_pos]
-        if visited is None:
-            visited = {current_pos}
-        
-        # If we have visited most cells and can return to start
-        if len(visited) >= self.width * self.height - len(self.no_fly_zones) - 5:
-            neighbors = self.get_neighbors(current_pos[0], current_pos[1])
-            if self.start_pos in neighbors:
-                return path + [self.start_pos]
-        
-        # Try to visit unvisited neighbors first
-        neighbors = self.get_neighbors(current_pos[0], current_pos[1])
-        unvisited_neighbors = [n for n in neighbors if n not in visited]
-        
-        # Sort by distance to unvisited areas to encourage exploration
-        if unvisited_neighbors:
-            neighbors_to_try = unvisited_neighbors
-        else:
-            neighbors_to_try = neighbors
-        
-        for next_pos in neighbors_to_try:
-            new_visited = visited.copy()
-            new_visited.add(next_pos)
-            new_path = path + [next_pos]
-            
-            # If we can return to start and have a good coverage
-            if (len(new_visited) >= max(20, self.width * self.height - len(self.no_fly_zones) - 10)):
-                if self.start_pos in self.get_neighbors(next_pos[0], next_pos[1]):
-                    return new_path + [self.start_pos]
-            
-            # Continue exploring if path not too long
-            if len(new_path) < 100:
-                result = self.find_path_dfs(next_pos, new_path, new_visited)
-                if result:
-                    return result
-        
-        return None
+    def manhattan_distance(self, p1, p2):
+        """计算曼哈顿距离"""
+        return abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])
     
-    def find_spiral_path(self):
-        """Find a spiral-like path that covers most cells"""
+    def plan_path_greedy_enhanced(self):
+        """增强贪心算法 - 考虑未来可达性"""
+        accessible = self.get_accessible_points()
+        visited = set()
         path = [self.start_pos]
-        visited = {self.start_pos}
+        visited.add(self.start_pos)
         current = self.start_pos
         
-        # Directions: right, up, left, down (clockwise spiral)
-        directions = [(0, 1), (-1, 0), (0, -1), (1, 0)]
-        dir_idx = 0
+        while len(visited) < len(accessible):
+            neighbors = [n for n in self.get_neighbors(current) if n not in visited]
+            
+            if neighbors:
+                # 评估每个邻居
+                best_neighbor = None
+                best_score = -float('inf')
+                
+                for neighbor in neighbors:
+                    # 计算选择这个邻居后的得分
+                    score = 0
+                    
+                    # 1. 基础得分：未访问邻居的数量
+                    temp_visited = visited.copy()
+                    temp_visited.add(neighbor)
+                    
+                    for point in accessible:
+                        if point not in temp_visited:
+                            point_neighbors = [n for n in self.get_neighbors(point) 
+                                             if n not in temp_visited]
+                            score += len(point_neighbors)
+                    
+                    # 2. 避免死角：检查是否会创建孤立点
+                    isolated_penalty = 0
+                    for point in accessible:
+                        if point not in temp_visited:
+                            point_neighbors = [n for n in self.get_neighbors(point) 
+                                             if n not in temp_visited]
+                            if len(point_neighbors) == 0:
+                                isolated_penalty += 100
+                    score -= isolated_penalty
+                    
+                    # 3. 最后阶段优先靠近起点
+                    if len(visited) >= len(accessible) - 5:
+                        dist_to_start = self.manhattan_distance(neighbor, self.start_pos)
+                        score += (20 - dist_to_start) * 5
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_neighbor = neighbor
+                
+                current = best_neighbor
+            else:
+                # 寻找最近的未访问点
+                min_dist = float('inf')
+                nearest = None
+                for point in accessible:
+                    if point not in visited:
+                        dist = self.manhattan_distance(point, current)
+                        if dist < min_dist:
+                            min_dist = dist
+                            nearest = point
+                
+                if nearest:
+                    current = nearest
+                else:
+                    break
+            
+            path.append(current)
+            visited.add(current)
         
-        while len(visited) < self.width * self.height - len(self.no_fly_zones):
+        # 回到起点
+        path.append(self.start_pos)
+        return path
+    
+    def plan_path_spiral(self):
+        """螺旋式路径规划"""
+        accessible = set(self.get_accessible_points())
+        visited = set()
+        path = [self.start_pos]
+        visited.add(self.start_pos)
+        
+        # 定义螺旋方向：右、上、左、下
+        directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        dir_idx = 0
+        current = self.start_pos
+        
+        while len(visited) < len(accessible):
             moved = False
             
-            # Try current direction
-            dr, dc = directions[dir_idx]
-            new_row, new_col = current[0] + dr, current[1] + dc
-            
-            if (self.is_valid_move(new_row, new_col) and 
-                (new_row, new_col) not in visited):
-                current = (new_row, new_col)
-                path.append(current)
-                visited.add(current)
-                moved = True
-            else:
-                # Change direction
-                dir_idx = (dir_idx + 1) % 4
+            # 尝试按当前方向移动
+            for _ in range(4):  # 最多尝试4个方向
+                dx, dy = directions[dir_idx]
+                next_pos = (current[0] + dx, current[1] + dy)
                 
-                # Try new direction
-                dr, dc = directions[dir_idx]
-                new_row, new_col = current[0] + dr, current[1] + dc
-                
-                if (self.is_valid_move(new_row, new_col) and 
-                    (new_row, new_col) not in visited):
-                    current = (new_row, new_col)
+                if (next_pos in accessible and 
+                    next_pos not in visited and 
+                    0 <= next_pos[0] < self.cols and 
+                    0 <= next_pos[1] < self.rows):
+                    current = next_pos
                     path.append(current)
                     visited.add(current)
                     moved = True
-            
-            if not moved:
-                # Find nearest unvisited cell
-                unvisited = []
-                for r in range(self.height):
-                    for c in range(self.width):
-                        if (r, c) not in visited and (r, c) not in self.no_fly_zones:
-                            unvisited.append((r, c))
-                
-                if not unvisited:
                     break
+                else:
+                    # 转向
+                    dir_idx = (dir_idx + 1) % 4
+            
+            # 如果螺旋被阻挡，找最近的未访问点
+            if not moved:
+                min_dist = float('inf')
+                nearest = None
+                for point in accessible:
+                    if point not in visited:
+                        dist = self.manhattan_distance(point, current)
+                        if dist < min_dist:
+                            min_dist = dist
+                            nearest = point
                 
-                # Move to closest unvisited cell
-                closest = min(unvisited, 
-                            key=lambda x: abs(x[0] - current[0]) + abs(x[1] - current[1]))
-                current = closest
-                path.append(current)
-                visited.add(current)
+                if nearest:
+                    current = nearest
+                    path.append(current)
+                    visited.add(current)
+                else:
+                    break
         
-        # Return to start
-        if current != self.start_pos:
-            path.append(self.start_pos)
-        
+        path.append(self.start_pos)
         return path
     
-    def visualize_path(self, path=None, title="Path Planning Visualization"):
-        """Visualize the grid and path"""
-        if path is None:
-            path = self.path
+    def plan_path_zigzag(self):
+        """之字形路径规划"""
+        accessible = self.get_accessible_points()
+        visited = set()
+        path = [self.start_pos]
+        visited.add(self.start_pos)
         
-        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        # 按行组织点
+        rows_dict = {}
+        for point in accessible:
+            row = point[1]
+            if row not in rows_dict:
+                rows_dict[row] = []
+            rows_dict[row].append(point)
         
-        # Draw grid
-        for i in range(self.height + 1):
-            ax.axhline(y=i, color='lightgray', linewidth=0.5)
-        for i in range(self.width + 1):
-            ax.axvline(x=i, color='lightgray', linewidth=0.5)
+        # 对每行的点按列排序
+        for row in rows_dict:
+            rows_dict[row].sort(key=lambda x: x[0])
         
-        # Draw no-fly zones
-        for row, col in self.no_fly_zones:
-            rect = patches.Rectangle((col, self.height - 1 - row), 1, 1, 
-                                   linewidth=2, edgecolor='red', facecolor='red', alpha=0.7)
-            ax.add_patch(rect)
-            ax.text(col + 0.5, self.height - 1 - row + 0.5, 'X', 
-                   ha='center', va='center', fontsize=16, fontweight='bold', color='white')
+        # 从起点所在行开始
+        current_row = self.start_pos[1]
+        direction = 1  # 1: 向右, -1: 向左
         
-        # Draw path
-        if path and len(path) > 1:
-            path_x = [col + 0.5 for row, col in path]
-            path_y = [self.height - 1 - row + 0.5 for row, col in path]
-            
-            ax.plot(path_x, path_y, 'b-', linewidth=2, alpha=0.7, label='Path')
-            
-            # Mark waypoints
-            for i, (x, y) in enumerate(zip(path_x, path_y)):
-                if i == 0:
-                    ax.plot(x, y, 'go', markersize=10, label='Start/End')
-                elif i == len(path_x) - 1:
-                    ax.plot(x, y, 'go', markersize=10)
-                else:
-                    ax.plot(x, y, 'bo', markersize=4)
+        # 访问当前行
+        if current_row in rows_dict:
+            row_points = rows_dict[current_row]
+            if direction == 1:
+                for point in row_points:
+                    if point not in visited:
+                        path.append(point)
+                        visited.add(point)
+            else:
+                for point in reversed(row_points):
+                    if point not in visited:
+                        path.append(point)
+                        visited.add(point)
+        
+        # 访问其他行
+        for row in range(self.rows):
+            if row != current_row and row in rows_dict:
+                direction *= -1  # 改变方向
+                row_points = rows_dict[row]
                 
-                # Add step numbers for first few and last few points
-                if i < 5 or i >= len(path_x) - 3:
-                    ax.text(x + 0.1, y + 0.1, str(i), fontsize=8, color='darkblue')
+                if direction == 1:
+                    for point in row_points:
+                        if point not in visited:
+                            path.append(point)
+                            visited.add(point)
+                else:
+                    for point in reversed(row_points):
+                        if point not in visited:
+                            path.append(point)
+                            visited.add(point)
         
-        # Set labels
-        ax.set_xlim(0, self.width)
-        ax.set_ylim(0, self.height)
+        # 确保访问所有点
+        for point in accessible:
+            if point not in visited:
+                path.append(point)
+                visited.add(point)
         
-        # Set ticks and labels
-        ax.set_xticks(np.arange(0.5, self.width + 0.5))
-        ax.set_xticklabels([f'A{i+1}' for i in range(self.width)])
-        ax.set_yticks(np.arange(0.5, self.height + 0.5))
-        ax.set_yticklabels([f'B{self.height-i}' for i in range(self.height)])
+        path.append(self.start_pos)
+        return path
+    
+    def evaluate_path(self, path):
+        """评估路径质量"""
+        if len(path) < 2:
+            return float('inf')
         
-        ax.set_title(title)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        ax.set_aspect('equal')
+        total_distance = 0
+        revisits = 0
+        visited = set()
+        
+        for i in range(len(path) - 1):
+            # 计算总距离
+            total_distance += self.manhattan_distance(path[i], path[i + 1])
+            
+            # 统计重复访问
+            if path[i] in visited:
+                revisits += 1
+            visited.add(path[i])
+        
+        # 检查是否覆盖所有可访问点
+        accessible = set(self.get_accessible_points())
+        coverage = len(set(path) & accessible) / len(accessible)
+        
+        # 综合评分（越小越好）
+        score = total_distance + revisits * 10 + (1 - coverage) * 100
+        
+        return score
+    
+    def plan_optimal_path(self):
+        """尝试多种算法，选择最优路径"""
+        algorithms = [
+            ("增强贪心算法", self.plan_path_greedy_enhanced),
+            ("螺旋式算法", self.plan_path_spiral),
+            ("之字形算法", self.plan_path_zigzag)
+        ]
+        
+        best_path = None
+        best_score = float('inf')
+        best_algorithm = ""
+        
+        print("正在尝试不同的路径规划算法...")
+        
+        for name, algorithm in algorithms:
+            try:
+                path = algorithm()
+                score = self.evaluate_path(path)
+                print(f"{name}: 路径长度={len(path)}, 评分={score:.2f}")
+                
+                if score < best_score:
+                    best_score = score
+                    best_path = path
+                    best_algorithm = name
+            except Exception as e:
+                print(f"{name} 失败: {e}")
+        
+        print(f"\n最优算法: {best_algorithm}")
+        self.path = best_path
+        return best_path
+    
+    def visualize_comparison(self):
+        """可视化比较不同算法的结果"""
+        fig, axes = plt.subplots(2, 2, figsize=(16, 14))
+        algorithms = [
+            ("增强贪心算法", self.plan_path_greedy_enhanced),
+            ("螺旋式算法", self.plan_path_spiral),
+            ("之字形算法", self.plan_path_zigzag),
+            ("最优路径", lambda: self.path)
+        ]
+        
+        for idx, (ax, (name, algorithm)) in enumerate(zip(axes.flat, algorithms)):
+            if name != "最优路径":
+                path = algorithm()
+            else:
+                path = self.path
+            
+            self._draw_grid(ax, path, name)
         
         plt.tight_layout()
-        return fig, ax
-    
-    def print_path_info(self, path):
-        """Print path information"""
-        if not path:
-            print("No path found!")
-            return
-        
-        print(f"Path length: {len(path)} steps")
-        print(f"Unique cells visited: {len(set(path))}")
-        print(f"Total cells in grid: {self.width * self.height}")
-        print(f"No-fly zones: {len(self.no_fly_zones)}")
-        print(f"Coverage: {len(set(path)) / (self.width * self.height - len(self.no_fly_zones)) * 100:.1f}%")
-        
-        # Convert path to readable format
-        readable_path = []
-        for row, col in path[:10]:  # Show first 10 steps
-            col_letter = chr(ord('A') + col)
-            row_num = row + 1
-            readable_path.append(f"{col_letter}{row_num}")
-        
-        print(f"First 10 steps: {' -> '.join(readable_path)}")
-        
-        if len(path) > 10:
-            readable_path = []
-            for row, col in path[-5:]:  # Show last 5 steps
-                col_letter = chr(ord('A') + col)
-                row_num = row + 1
-                readable_path.append(f"{col_letter}{row_num}")
-            print(f"Last 5 steps: {' -> '.join(readable_path)}")
-
-def main():
-    """Demo different no-fly zone patterns and path planning algorithms"""
-    patterns = ['horizontal', 'vertical', 'L_shape', 'diagonal', 'corner']
-    
-    for pattern in patterns:
-        print(f"\n{'='*50}")
-        print(f"TESTING PATTERN: {pattern.upper()}")
-        print('='*50)
-        
-        # Create path planner
-        planner = GridPathPlanner()
-        
-        # Set up consecutive no-fly zones
-        planner.create_example_consecutive_zones(pattern)
-        
-        print(f"Start position: A9B1")
-        print(f"No-fly zones: {[(chr(ord('A') + col), row + 1) for row, col in planner.no_fly_zones]}")
-        
-        # Find path using spiral method (usually gives better coverage)
-        print(f"\nFinding spiral path for {pattern} pattern...")
-        spiral_path = planner.find_spiral_path()
-        
-        print(f"\n=== Spiral Path Results for {pattern} ===")
-        planner.print_path_info(spiral_path)
-        
-        # Visualize
-        fig1, ax1 = planner.visualize_path(spiral_path, f"Spiral Path - {pattern.title()} No-fly Zones")
         plt.show()
+    
+    def _draw_grid(self, ax, path, title):
+        """在指定的轴上绘制网格和路径"""
+        # 绘制网格
+        for i in range(self.cols + 1):
+            ax.axvline(x=i, color='black', linewidth=0.5)
+        for i in range(self.rows + 1):
+            ax.axhline(y=i, color='black', linewidth=0.5)
         
-        # Also try DFS method for comparison
-        print(f"\nFinding DFS path for {pattern} pattern...")
-        dfs_path = planner.find_path_dfs()
+        # 绘制方格标签
+        for row in range(self.rows):
+            for col in range(self.cols):
+                label = f"{chr(65 + col)}{row + 1}"
+                ax.text(col + 0.5, row + 0.5, label, 
+                       ha='center', va='center', fontsize=8)
         
-        if dfs_path:
-            print(f"\n=== DFS Path Results for {pattern} ===")
-            planner.print_path_info(dfs_path)
+        # 绘制禁飞区
+        for col, row in self.forbidden_zones:
+            rect = patches.Rectangle((col, row), 1, 1, 
+                                   linewidth=1, edgecolor='black', 
+                                   facecolor='gray', alpha=0.7)
+            ax.add_patch(rect)
+        
+        # 绘制起点
+        start_rect = patches.Rectangle((self.start_pos[0], self.start_pos[1]), 
+                                     1, 1, linewidth=2, edgecolor='black', 
+                                     facecolor='red', alpha=0.7)
+        ax.add_patch(start_rect)
+        
+        # 绘制路径
+        if path:
+            for i, (col, row) in enumerate(path[:-1]):
+                if (col, row) != self.start_pos:
+                    rect = patches.Rectangle((col, row), 1, 1, 
+                                           linewidth=1, edgecolor='black', 
+                                           facecolor='lightgreen', alpha=0.5)
+                    ax.add_patch(rect)
+                
+                # 添加序号
+                ax.text(col + 0.8, row + 0.2, str(i + 1), 
+                       ha='center', va='center', fontsize=6, 
+                       color='blue', fontweight='bold')
             
-            fig2, ax2 = planner.visualize_path(dfs_path, f"DFS Path - {pattern.title()} No-fly Zones")
-            plt.show()
-        else:
-            print(f"DFS could not find a suitable path for {pattern} pattern")
+            # 绘制路径线
+            for i in range(len(path) - 1):
+                start = (path[i][0] + 0.5, path[i][1] + 0.5)
+                end = (path[i + 1][0] + 0.5, path[i + 1][1] + 0.5)
+                
+                ax.plot([start[0], end[0]], [start[1], end[1]], 
+                       'b-', linewidth=1.5, alpha=0.6)
         
-        input(f"\nPress Enter to continue to next pattern...")
+        # 设置标题和属性
+        ax.set_xlim(0, self.cols)
+        ax.set_ylim(0, self.rows)
+        ax.set_aspect('equal')
+        ax.invert_yaxis()
+        ax.set_title(f'{title}\n路径长度: {len(path) if path else 0}', fontsize=12)
 
-def demo_single_pattern(pattern='horizontal'):
-    """Run demo for a single pattern - useful for quick testing"""
-    print(f"Testing {pattern} pattern of consecutive no-fly zones")
-    print("-" * 50)
-    
-    planner = GridPathPlanner()
-    planner.create_example_consecutive_zones(pattern)
-    
-    print(f"Grid: 9x7 (A1-A9, B1-B7)")
-    print(f"Start/End: A9B1")
-    print(f"No-fly zones ({pattern}): {[(chr(ord('A') + col), row + 1) for row, col in planner.no_fly_zones]}")
-    
-    # Test spiral algorithm
-    spiral_path = planner.find_spiral_path()
-    print(f"\n=== Spiral Algorithm Results ===")
-    planner.print_path_info(spiral_path)
-    
-    # Visualize
-    fig, ax = planner.visualize_path(spiral_path, f"Path Planning: {pattern.title()} No-fly Zones")
-    plt.show()
-    
-    return planner, spiral_path
-
+# 使用示例
 if __name__ == "__main__":
-    # Uncomment one of the following options:
+    # 创建高级巡查系统
+    patrol = AdvancedWildlifePatrolSystem()
     
-    # Option 1: Test all patterns (full demo)
-    # main()
+    # 测试不同的禁飞区配置
+    test_cases = [
+        ("横向禁飞区 (C4-E4)", 2, 3, 'horizontal'),
+        ("纵向禁飞区 (F2-F4)", 5, 1, 'vertical'),
+        ("边缘横向禁飞区 (A7-C7)", 0, 6, 'horizontal'),
+    ]
     
-    # Option 2: Test single pattern (quick demo)
-    demo_single_pattern('L_shape')  # Try: horizontal, vertical, L_shape, diagonal, corner
-    
-    # Option 3: Custom no-fly zones
-    # planner = GridPathPlanner()
-    # planner.add_consecutive_no_fly_zones([('D', 3), ('D', 4), ('E', 4)])  # Custom L-shape
-    # path = planner.find_spiral_path()
-    # planner.print_path_info(path)
-    # planner.visualize_path(path, "Custom No-fly Zones")
-    # plt.show()
+    for case_name, col, row, shape in test_cases:
+        print(f"\n{'='*50}")
+        print(f"测试案例: {case_name}")
+        print(f"{'='*50}")
+        
+        patrol.set_forbidden_zone(col, row, shape)
+        
+        # 找到最优路径
+        optimal_path = patrol.plan_optimal_path()
+        
+        # 打印路径详情
+        print("\n最优路径详情:")
+        for i, (col, row) in enumerate(optimal_path[:10]):  # 只打印前10步
+            cell_name = f"{chr(65 + col)}{row + 1}"
+            print(f"步骤 {i + 1}: {cell_name}")
+        if len(optimal_path) > 10:
+            print(f"... (共 {len(optimal_path)} 步)")
+        
+        # 可视化比较
+        patrol.visualize_comparison()
+        
+        # 等待用户输入继续
+        input("\n按Enter继续下一个测试案例...")
