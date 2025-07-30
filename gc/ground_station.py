@@ -14,14 +14,19 @@ from datetime import datetime
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
+from plan import plan_path_api
 
 class GridWidget(QWidget):
     """地图网格显示控件"""
+    no_fly_zone_clicked = pyqtSignal(str)  # 禁飞区点击信号
+    
     def __init__(self):
         super().__init__()
         self.grid_data = {}  # 存储每个格子的动物数据
         self.no_fly_zones = []  # 禁飞区列表
+        self.planned_path = []  # 规划的路径
         self.setMinimumSize(450, 350)
+        self.setMouseTracking(True)
         
     def add_no_fly_zone(self, grid_code):
         """添加禁飞区"""
@@ -34,6 +39,34 @@ class GridWidget(QWidget):
         if grid_code in self.no_fly_zones:
             self.no_fly_zones.remove(grid_code)
             self.update()
+    
+    def toggle_no_fly_zone(self, grid_code):
+        """切换禁飞区状态"""
+        if grid_code in self.no_fly_zones:
+            self.remove_no_fly_zone(grid_code)
+        else:
+            self.add_no_fly_zone(grid_code)
+    
+    def set_planned_path(self, path):
+        """设置规划路径"""
+        self.planned_path = path
+        self.update()
+    
+    def mousePressEvent(self, event):
+        """鼠标点击事件"""
+        if event.button() == Qt.LeftButton:
+            # 计算点击的格子
+            cell_width = self.width() / 9
+            cell_height = self.height() / 7
+            
+            col = int(event.x() / cell_width)
+            row = int(event.y() / cell_height)
+            
+            if 0 <= col < 9 and 0 <= row < 7:
+                grid_code = f"A{col+1}B{row+1}"
+                self.toggle_no_fly_zone(grid_code)
+                self.no_fly_zone_clicked.emit(grid_code)
+        super().mousePressEvent(event)
     
     def update_grid_data(self, grid_code, animal_type, count):
         """更新格子数据"""
@@ -70,6 +103,10 @@ class GridWidget(QWidget):
                 # 绘制禁飞区
                 if grid_code in self.no_fly_zones:
                     painter.fillRect(x, y, int(cell_width), int(cell_height), QColor(180, 180, 180))
+                
+                # 绘制规划路径
+                if grid_code in self.planned_path:
+                    painter.fillRect(x, y, int(cell_width), int(cell_height), QColor(255, 255, 0, 100))  # 半透明黄色
                 
                 # 绘制动物数据
                 if grid_code in self.grid_data:
@@ -248,17 +285,31 @@ class GroundStation(QMainWindow):
         map_layout.addWidget(self.grid_widget)
         left_layout.addWidget(map_group)
         
-        # 禁飞区设置
-        no_fly_group = QGroupBox("禁飞区设置")
-        no_fly_layout = QHBoxLayout(no_fly_group)
-        self.no_fly_input = QLineEdit()
-        self.no_fly_input.setPlaceholderText("输入格子代码，如A3B5")
-        self.add_no_fly_btn = QPushButton("添加禁飞区")
+        # 路径规划设置
+        path_group = QGroupBox("路径规划")
+        path_layout = QVBoxLayout(path_group)
+        
+        # 禁飞区操作提示
+        tip_label = QLabel("提示：点击地图格子设置/取消禁飞区（灰色区域）")
+        tip_label.setStyleSheet("color: blue; font-size: 10px;")
+        path_layout.addWidget(tip_label)
+        
+        # 路径规划按钮
+        plan_button_layout = QHBoxLayout()
+        self.plan_path_btn = QPushButton("生成路径规划")
+        self.clear_path_btn = QPushButton("清除路径")
         self.clear_no_fly_btn = QPushButton("清除禁飞区")
-        no_fly_layout.addWidget(self.no_fly_input)
-        no_fly_layout.addWidget(self.add_no_fly_btn)
-        no_fly_layout.addWidget(self.clear_no_fly_btn)
-        left_layout.addWidget(no_fly_group)
+        plan_button_layout.addWidget(self.plan_path_btn)
+        plan_button_layout.addWidget(self.clear_path_btn)
+        plan_button_layout.addWidget(self.clear_no_fly_btn)
+        path_layout.addLayout(plan_button_layout)
+        
+        # 路径信息显示
+        self.path_info_label = QLabel("路径信息：未规划")
+        self.path_info_label.setStyleSheet("background-color: #f0f0f0; padding: 5px; border: 1px solid #ccc;")
+        path_layout.addWidget(self.path_info_label)
+        
+        left_layout.addWidget(path_group)
         
         # 控制按钮
         control_group = QGroupBox("控制指令")
@@ -310,8 +361,9 @@ class GroundStation(QMainWindow):
         
     def init_signals(self):
         """初始化信号连接"""
-        self.add_no_fly_btn.clicked.connect(self.add_no_fly_zone)
         self.clear_no_fly_btn.clicked.connect(self.clear_no_fly_zones)
+        self.plan_path_btn.clicked.connect(self.plan_path)
+        self.clear_path_btn.clicked.connect(self.clear_path)
         self.start_btn.clicked.connect(self.send_start_patrol)
         self.stop_btn.clicked.connect(self.send_emergency_stop)
         self.return_btn.clicked.connect(self.send_return_home)
@@ -319,6 +371,7 @@ class GroundStation(QMainWindow):
         self.stats_btn.clicked.connect(self.show_statistics)
         self.history_btn.clicked.connect(self.show_history)
         
+        self.grid_widget.no_fly_zone_clicked.connect(self.on_no_fly_zone_changed)
         self.data_received.connect(self.handle_received_data)
         self.connection_status_changed.connect(self.update_connection_status)
         
@@ -340,16 +393,52 @@ class GroundStation(QMainWindow):
         self.history_dialog.show()
         self.history_dialog.raise_()
         self.history_dialog.activateWindow()
-        
-    def add_no_fly_zone(self):
-        """添加禁飞区"""
-        grid_code = self.no_fly_input.text().strip().upper()
-        if self.validate_grid_code(grid_code):
-            self.grid_widget.add_no_fly_zone(grid_code)
-            self.no_fly_input.clear()
-            self.send_no_fly_zones()
+    
+    def on_no_fly_zone_changed(self, grid_code):
+        """禁飞区变化时的处理"""
+        if grid_code in self.grid_widget.no_fly_zones:
+            self.statusBar().showMessage(f"添加禁飞区: {grid_code}")
         else:
-            QMessageBox.warning(self, "警告", "无效的格子代码！")
+            self.statusBar().showMessage(f"移除禁飞区: {grid_code}")
+        self.send_no_fly_zones()
+    
+    def plan_path(self):
+        """执行路径规划"""
+        if len(self.grid_widget.no_fly_zones) != 3:
+            QMessageBox.warning(self, "警告", "路径规划需要恰好3个禁飞区！\n请点击地图设置禁飞区。")
+            return
+        
+        try:
+            # 调用路径规划API
+            obstacle_list = sorted(self.grid_widget.no_fly_zones)  # 排序确保一致性
+            result = plan_path_api(obstacle_list, "gc/output")
+            
+            if result["success"]:
+                # 显示规划结果
+                path_labels = result["path_labels"]
+                self.grid_widget.set_planned_path(path_labels)
+                
+                # 更新路径信息显示
+                path_length = result["path_length"]
+                self.path_info_label.setText(f"路径长度: {path_length}步\n起点: A9B1 -> 终点: A9B1")
+                
+                # 发送路径规划结果到无人机
+                self.send_planned_path(path_labels)
+                
+                QMessageBox.information(self, "路径规划成功", 
+                                      f"路径规划完成！\n路径长度: {path_length}步\n\n路径已发送给无人机")
+            else:
+                QMessageBox.critical(self, "路径规划失败", f"规划失败: {result['message']}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"路径规划出错: {e}")
+    
+    def clear_path(self):
+        """清除路径规划"""
+        self.grid_widget.set_planned_path([])
+        self.path_info_label.setText("路径信息：未规划")
+        self.statusBar().showMessage("已清除路径规划")
+        
     
     def clear_no_fly_zones(self):
         """清除所有禁飞区"""
@@ -568,6 +657,16 @@ class GroundStation(QMainWindow):
         command = {
             'type': 'return_home',
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        self.send_command(command)
+    
+    def send_planned_path(self, path_labels):
+        """发送规划路径到无人机"""
+        command = {
+            'type': 'planned_path',
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'path': path_labels,
+            'no_fly_zones': self.grid_widget.no_fly_zones
         }
         self.send_command(command)
     
