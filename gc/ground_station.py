@@ -68,11 +68,36 @@ class GridWidget(QWidget):
                 self.no_fly_zone_clicked.emit(grid_code)
         super().mousePressEvent(event)
     
-    def update_grid_data(self, grid_code, animal_type, count):
-        """更新格子数据"""
+    def update_grid_data(self, grid_code, animals_data):
+        """更新格子数据
+        Args:
+            grid_code: 方格代码
+            animals_data: 动物数据，可以是：
+                - 字典: {animal_type: count, ...}
+                - 列表: [{'type': animal_type, 'count': count}, ...]
+                - 元组: (animal_type, count) 兼容旧格式
+        """
         if grid_code not in self.grid_data:
             self.grid_data[grid_code] = {}
-        self.grid_data[grid_code][animal_type] = count
+            
+        if isinstance(animals_data, dict):
+            # 字典格式：{'象': 2, '虎': 1}
+            for animal_type, count in animals_data.items():
+                if count > 0:
+                    self.grid_data[grid_code][animal_type] = self.grid_data[grid_code].get(animal_type, 0) + count
+        elif isinstance(animals_data, list):
+            # 列表格式：[{'type': '象', 'count': 2}]
+            for animal_data in animals_data:
+                animal_type = animal_data.get('type')
+                count = animal_data.get('count', 0)
+                if animal_type and count > 0:
+                    self.grid_data[grid_code][animal_type] = self.grid_data[grid_code].get(animal_type, 0) + count
+        elif isinstance(animals_data, tuple) and len(animals_data) == 2:
+            # 兼容旧格式：(animal_type, count)
+            animal_type, count = animals_data
+            if count > 0:
+                self.grid_data[grid_code][animal_type] = self.grid_data[grid_code].get(animal_type, 0) + count
+        
         self.update()
     
     def paintEvent(self, event):
@@ -558,32 +583,67 @@ class GroundStation(QMainWindow):
         if msg_type == 'animal_detection':
             # 处理动物检测数据
             grid_code = data.get('grid_code')
-            animal_type = data.get('animal_type')
-            count = data.get('count')
             
-            # 更新地图显示
-            self.grid_widget.update_grid_data(grid_code, animal_type, count)
+            # 兼容旧格式和新格式
+            if 'animals' in data:
+                # 新格式：包含多种动物的列表
+                animals_list = data.get('animals', [])
+                total_count = data.get('total_count', 0)
+                
+                # 更新地图显示
+                animals_dict = {animal['type']: animal['count'] for animal in animals_list}
+                self.grid_widget.update_grid_data(grid_code, animals_dict)
+                
+                # 更新统计
+                for animal_data in animals_list:
+                    animal_type = animal_data['type']
+                    count = animal_data['count']
+                    if animal_type in self.total_animals:
+                        self.total_animals[animal_type] += count
+                
+                # 添加到历史记录
+                animals_str = ', '.join([f"{animal['type']} x{animal['count']}" for animal in animals_list])
+                record = f"{timestamp} - {grid_code}: {animals_str}"
+                self.detection_history.append(record)
+                if self.history_dialog:
+                    self.history_dialog.add_record(record)
+                
+                # 显示实时数据
+                self.data_text.append(f"[{timestamp}] 检测到动物:")
+                self.data_text.append(f"  位置: {grid_code}")
+                self.data_text.append(f"  总数量: {total_count}")
+                for animal_data in animals_list:
+                    self.data_text.append(f"  {animal_data['type']}: {animal_data['count']}")
+                self.data_text.append("")
+                
+            else:
+                # 兼容旧格式：单个动物类型
+                animal_type = data.get('animal_type')
+                count = data.get('count')
+                
+                # 更新地图显示
+                self.grid_widget.update_grid_data(grid_code, (animal_type, count))
+                
+                # 更新统计
+                if animal_type in self.total_animals:
+                    self.total_animals[animal_type] += count
+                
+                # 添加到历史记录
+                record = f"{timestamp} - {grid_code}: {animal_type} x{count}"
+                self.detection_history.append(record)
+                if self.history_dialog:
+                    self.history_dialog.add_record(record)
+                
+                # 显示实时数据
+                self.data_text.append(f"[{timestamp}] 检测到动物:")
+                self.data_text.append(f"  位置: {grid_code}")
+                self.data_text.append(f"  类型: {animal_type}")
+                self.data_text.append(f"  数量: {count}")
+                self.data_text.append("")
             
-            # 更新统计
-            if animal_type in self.total_animals:
-                self.total_animals[animal_type] += count
-                # 如果统计窗口打开，更新显示
-                if self.stats_dialog and self.stats_dialog.isVisible():
-                    self.stats_dialog.update_statistics(self.total_animals)
-            
-            # 添加到历史记录
-            record = f"{timestamp} - {grid_code}: {animal_type} x{count}"
-            self.detection_history.append(record)
-            # 如果历史窗口打开，添加记录
-            if self.history_dialog:
-                self.history_dialog.add_record(record)
-            
-            # 显示实时数据
-            self.data_text.append(f"[{timestamp}] 检测到动物:")
-            self.data_text.append(f"  位置: {grid_code}")
-            self.data_text.append(f"  类型: {animal_type}")
-            self.data_text.append(f"  数量: {count}")
-            self.data_text.append("")
+            # 如果统计窗口打开，更新显示
+            if self.stats_dialog and self.stats_dialog.isVisible():
+                self.stats_dialog.update_statistics(self.total_animals)
             
         elif msg_type == 'status':
             # 处理状态信息

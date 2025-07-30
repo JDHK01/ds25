@@ -40,19 +40,38 @@ class DroneComm:
             self.socket.close()
             print("已断开与地面站的连接")
     
-    def send_animal_detection(self, grid_code, animal_type, count):
+    def send_animal_detection(self, grid_code, animals_data):
         """发送动物检测数据
         Args:
             grid_code: 方格代码，如'A3B5'
-            animal_type: 动物类型，如'象'、'虎'、'狼'、'猴'、'孔雀'
-            count: 动物数量
+            animals_data: 动物数据列表或字典
+                - 列表格式: [{'type': '象', 'count': 2}, {'type': '虎', 'count': 1}]
+                - 字典格式: {'象': 2, '虎': 1, '猴': 3}
         """
+        # 统一转换为列表格式
+        if isinstance(animals_data, dict):
+            animals_list = [{'type': animal_type, 'count': count} 
+                          for animal_type, count in animals_data.items() if count > 0]
+        elif isinstance(animals_data, list):
+            animals_list = [animal for animal in animals_data if animal.get('count', 0) > 0]
+        else:
+            # 兼容旧格式：单个动物类型和数量
+            if isinstance(animals_data, tuple) and len(animals_data) == 2:
+                animal_type, count = animals_data
+                animals_list = [{'type': animal_type, 'count': count}]
+            else:
+                raise ValueError("animals_data 格式不正确")
+        
+        # 如果没有检测到动物，不发送数据
+        if not animals_list:
+            return
+            
         data = {
             'type': 'animal_detection',
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3],
             'grid_code': grid_code,
-            'animal_type': animal_type,
-            'count': count
+            'animals': animals_list,  # 改为animals列表
+            'total_count': sum(animal['count'] for animal in animals_list)
         }
         self.send_queue.put(data)
     
@@ -192,14 +211,17 @@ if __name__ == "__main__":
             drone_comm.send_status('altitude', 120.5)
             time.sleep(1)
             
-            # 发送动物检测数据
-            drone_comm.send_animal_detection('A3B5', '象', 2)
+            # 发送动物检测数据 - 支持多种格式
+            # 方式1：字典格式（同一位置多种动物）
+            drone_comm.send_animal_detection('A3B5', {'象': 2, '虎': 1})
             time.sleep(1)
             
-            drone_comm.send_animal_detection('B2C4', '虎', 1)
+            # 方式2：列表格式
+            drone_comm.send_animal_detection('B2C4', [{'type': '虎', 'count': 1}, {'type': '猴', 'count': 2}])
             time.sleep(1)
             
-            drone_comm.send_animal_detection('C1D3', '猴', 3)
+            # 方式3：单个动物（兼容旧格式）
+            drone_comm.send_animal_detection('C1D3', {'猴': 3})
             time.sleep(1)
             
             # 发送任务完成信息
