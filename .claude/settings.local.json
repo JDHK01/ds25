@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python:*)",
       "Bash(mv:*)",
-      "Bash(ls -la /Users/yqz/by/wrj/)"
+      "Bash(ls -la /Users/yqz/by/wrj/)",
+      "mcp__ide__executeCode"
     ],
     "deny": []
   }

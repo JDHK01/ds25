@@ -38,70 +38,88 @@ from mavsdk.telemetry import LandedState
     #     )
 DURATION = 3
 HEIGHT = -1.1
-# 所有的点位置存储, 希望claude能进行优化
-A9B1 = (0.0, 0.0)
-A8B1 = (0.5, 0.0)
-A7B1 = (1.0, 0.0)
-A6B1 = (1.5, 0.0)
-A5B1 = (2.0, 0.0)
-A4B1 = (2.5, 0.0)
-A3B1 = (3.0, 0.0)
-A2B1 = (3.5, 0.0)
-A1B1 = (4.0, 0.0)
-A9B2 = (0.0, 0.5)
-A8B2 = (0.5, 0.5)
-A7B2 = (1.0, 0.5)
-A6B2 = (1.5, 0.5)
-A5B2 = (2.0, 0.5)
-A4B2 = (2.5, 0.5)
-A3B2 = (3.0, 0.5)
-A2B2 = (3.5, 0.5)
-A1B2 = (4.0, 0.5)
-A9B3 = (0.0, 1.0)
-A8B3 = (0.5, 1.0)
-A7B3 = (1.0, 1.0)
-A6B3 = (1.5, 1.0)
-A5B3 = (2.0, 1.0)
-A4B3 = (2.5, 1.0)
-A3B3 = (3.0, 1.0)
-A2B3 = (3.5, 1.0)
-A1B3 = (4.0, 1.0)
-A9B4 = (0.0, 1.5)
-A8B4 = (0.5, 1.5)
-A7B4 = (1.0, 1.5)
-A6B4 = (1.5, 1.5)
-A5B4 = (2.0, 1.5)
-A4B4 = (2.5, 1.5)
-A3B4 = (3.0, 1.5)
-A2B4 = (3.5, 1.5)
-A1B4 = (4.0, 1.5)
-A9B5 = (0.0, 2.0)
-A8B5 = (0.5, 2.0)
-A7B5 = (1.0, 2.0)
-A6B5 = (1.5, 2.0)
-A5B5 = (2.0, 2.0)
-A4B5 = (2.5, 2.0)
-A3B5 = (3.0, 2.0)
-A2B5 = (3.5, 2.0)
-A1B5 = (4.0, 2.0)
-A9B6 = (0.0, 2.5)
-A8B6 = (0.5, 2.5)
-A7B6 = (1.0, 2.5)
-A6B6 = (1.5, 2.5)
-A5B6 = (2.0, 2.5)
-A4B6 = (2.5, 2.5)
-A3B6 = (3.0, 2.5)
-A2B6 = (3.5, 2.5)
-A1B6 = (4.0, 2.5)
-A9B7 = (0.0, 3.0)
-A8B7 = (0.5, 3.0)
-A7B7 = (1.0, 3.0)
-A6B7 = (1.5, 3.0)
-A5B7 = (2.0, 3.0)
-A4B7 = (2.5, 3.0)
-A3B7 = (3.0, 3.0)
-A2B7 = (3.5, 3.0)
-A1B7 = (4.0, 3.0)
+
+# 创建了一个字典, 键是点的名称, 值是点的坐标
+def generate_coordinate_system():
+    """动态生成坐标系统"""
+    # 返回字典
+    coordinates = {}
+    for row in range(1, 8):  # B1 到 B7
+        for col in range(1, 10):  # A1 到 A9
+            # 从 A1 到 A9 对应 x 坐标从 4.0 到 0.0 (递减)
+            x = (9 - col) * 0.5
+            # 从 B1 到 B7 对应 y 坐标从 0.0 到 3.0
+            y = (row - 1) * 0.5
+            point_name = f"A{col}B{row}"
+            coordinates[point_name] = (x, y)
+    return coordinates
+COORDINATES = generate_coordinate_system()
+# 效果预览
+{
+# A9B1: (0.0, 0.0)
+# A8B1: (0.5, 0.0)
+# A7B1: (1.0, 0.0)
+# A6B1: (1.5, 0.0)
+# A5B1: (2.0, 0.0)
+# A4B1: (2.5, 0.0)
+# A3B1: (3.0, 0.0)
+# A2B1: (3.5, 0.0)
+# A1B1: (4.0, 0.0)
+# A9B2: (0.0, 0.5)
+# A8B2: (0.5, 0.5)
+# A7B2: (1.0, 0.5)
+# A6B2: (1.5, 0.5)
+# A5B2: (2.0, 0.5)
+# A4B2: (2.5, 0.5)
+# A3B2: (3.0, 0.5)
+# A2B2: (3.5, 0.5)
+# A1B2: (4.0, 0.5)
+# A9B3: (0.0, 1.0)
+# A8B3: (0.5, 1.0)
+# A7B3: (1.0, 1.0)
+# A6B3: (1.5, 1.0)
+# A5B3: (2.0, 1.0)
+# A4B3: (2.5, 1.0)
+# A3B3: (3.0, 1.0)
+# A2B3: (3.5, 1.0)
+# A1B3: (4.0, 1.0)
+# A9B4: (0.0, 1.5)
+# A8B4: (0.5, 1.5)
+# A7B4: (1.0, 1.5)
+# A6B4: (1.5, 1.5)
+# A5B4: (2.0, 1.5)
+# A4B4: (2.5, 1.5)
+# A3B4: (3.0, 1.5)
+# A2B4: (3.5, 1.5)
+# A1B4: (4.0, 1.5)
+# A9B5: (0.0, 2.0)
+# A8B5: (0.5, 2.0)
+# A7B5: (1.0, 2.0)
+# A6B5: (1.5, 2.0)
+# A5B5: (2.0, 2.0)
+# A4B5: (2.5, 2.0)
+# A3B5: (3.0, 2.0)
+# A2B5: (3.5, 2.0)
+# A1B5: (4.0, 2.0)
+# A9B6: (0.0, 2.5)
+# A8B6: (0.5, 2.5)
+# A7B6: (1.0, 2.5)
+# A6B6: (1.5, 2.5)
+# A5B6: (2.0, 2.5)
+# A4B6: (2.5, 2.5)
+# A3B6: (3.0, 2.5)
+# A2B6: (3.5, 2.5)
+# A1B6: (4.0, 2.5)
+# A9B7: (0.0, 3.0)
+# A8B7: (0.5, 3.0)
+# A7B7: (1.0, 3.0)
+# A6B7: (1.5, 3.0)
+# A5B7: (2.0, 3.0)
+# A4B7: (2.5, 3.0)
+# A3B7: (3.0, 3.0)
+# A2B7: (3.5, 3.0)
+# A1B7: (4.0, 3.0)
+}
 
 # 读取当前位置
 async def get_current_position(drone) -> Tuple[float, float, float, float]:
@@ -123,7 +141,7 @@ async def get_current_position(drone) -> Tuple[float, float, float, float]:
             yaw_deg
         )
 
-# 处理用户提供的航点列表的函数
+# 处理提供的航点列表的函数
 def create_waypoint_flight_plan(waypoint_names: List[str], height: float = HEIGHT, duration: float = DURATION) -> FlightPathManager:
     """
     根据用户提供的航点名称列表创建飞行计划
@@ -132,31 +150,19 @@ def create_waypoint_flight_plan(waypoint_names: List[str], height: float = HEIGH
         waypoint_names: 航点名称列表，如 ["A1B1", "A2B2"]
         height: 飞行高度
         duration: 在每个航点的停留时间
-    
     Returns:
         配置好的FlightPathManager
     """
-    # 创建坐标字典（使用现有定义的航点坐标）
-    coordinate_dict = {
-        "A9B1": A9B1, "A8B1": A8B1, "A7B1": A7B1, "A6B1": A6B1, "A5B1": A5B1, "A4B1": A4B1, "A3B1": A3B1, "A2B1": A2B1, "A1B1": A1B1,
-        "A9B2": A9B2, "A8B2": A8B2, "A7B2": A7B2, "A6B2": A6B2, "A5B2": A5B2, "A4B2": A4B2, "A3B2": A3B2, "A2B2": A2B2, "A1B2": A1B2,
-        "A9B3": A9B3, "A8B3": A8B3, "A7B3": A7B3, "A6B3": A6B3, "A5B3": A5B3, "A4B3": A4B3, "A3B3": A3B3, "A2B3": A2B3, "A1B3": A1B3,
-        "A9B4": A9B4, "A8B4": A8B4, "A7B4": A7B4, "A6B4": A6B4, "A5B4": A5B4, "A4B4": A4B4, "A3B4": A3B4, "A2B4": A2B4, "A1B4": A1B4,
-        "A9B5": A9B5, "A8B5": A8B5, "A7B5": A7B5, "A6B5": A6B5, "A5B5": A5B5, "A4B5": A4B5, "A3B5": A3B5, "A2B5": A2B5, "A1B5": A1B5,
-        "A9B6": A9B6, "A8B6": A8B6, "A7B6": A7B6, "A6B6": A6B6, "A5B6": A5B6, "A4B6": A4B6, "A3B6": A3B6, "A2B6": A2B6, "A1B6": A1B6,
-        "A9B7": A9B7, "A8B7": A8B7, "A7B7": A7B7, "A6B7": A6B7, "A5B7": A5B7, "A4B7": A4B7, "A3B7": A3B7, "A2B7": A2B7, "A1B7": A1B7
-    }
     
     # 创建飞行路径管理器
     flight_manager = FlightPathManager()
     flight_manager.create_waypoints_from_user_format(
         waypoint_names=waypoint_names,
-        coordinate_dict=coordinate_dict,
+        coordinate_dict=COORDINATES,
         height=height,
         yaw=0.0,
         duration=duration
     )
-    
     return flight_manager
 
 # 处理检测到物体时的逼近逻辑
@@ -200,7 +206,7 @@ async def approach_detected_objects(drone, vision_system: VisionGuidanceSystem,
             print(f"❌ 逼近物体 {i} 时发生错误: {e}")
             continue
         
-        # 短暂停留后继续下一个物体
+        # 短暂停留后继续下一个物体, 稳定后可以删除
         await asyncio.sleep(1.0)
     
     print(f"🏁 航点 {waypoint_name} 的所有物体逼近完成")
@@ -287,15 +293,9 @@ async def run(user_waypoint_list: List[str] = None):
     )
     
     # ==================== 定义飞行路径 ====================
-    # 如果用户提供了航点列表，使用用户的；否则使用默认的
-    if user_waypoint_list:
-        print(f"使用用户提供的航点列表: {user_waypoint_list}")
-        flight_manager = create_waypoint_flight_plan(user_waypoint_list, HEIGHT, DURATION)
-    else:
-        # 默认航点列表用于演示
-        default_waypoints = ["A8B1", "A7B1", "A6B1", "A5B1", "A4B1"]
-        print(f"使用默认航点列表: {default_waypoints}")
-        flight_manager = create_waypoint_flight_plan(default_waypoints, HEIGHT, DURATION)
+    
+    print(f"使用用户提供的航点列表: {user_waypoint_list}")
+    flight_manager = create_waypoint_flight_plan(user_waypoint_list, HEIGHT, DURATION)
     
     print(f"飞行路径规划完成，共 {len(flight_manager.waypoints)} 个航点")
     
@@ -308,9 +308,7 @@ async def run(user_waypoint_list: List[str] = None):
             current_waypoint = flight_manager.get_current_waypoint()
             if not current_waypoint:
                 break
-                
             print(f"\n🛩️  前往航点: {current_waypoint.name} at ({current_waypoint.north:.1f}, {current_waypoint.east:.1f}, {current_waypoint.down:.1f})")
-            
             # 飞往航点
             await goto_position_ned(
                 drone, 
