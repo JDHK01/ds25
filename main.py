@@ -37,7 +37,7 @@ from mavsdk.telemetry import LandedState
     #         0.0  # yaw暂时设为0
     #     )
 DURATION = 3
-HEIGHT = -1.1
+HEIGHT = -1.1 
 
 # 创建了一个字典, 键是点的名称, 值是点的坐标
 def generate_coordinate_system():
@@ -199,7 +199,8 @@ async def approach_detected_objects(drone, vision_system: VisionGuidanceSystem,
         
         try:
             # 执行视觉导航逼近
-            await drone_control_loop(vision_system, drone)
+            # await drone_control_loop(vision_system, drone)
+            print("已经取消了逼近")
             print(f"✅ 成功逼近物体 {i}: {detection.class_name}")
             
         except Exception as e:
