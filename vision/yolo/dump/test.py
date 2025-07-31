@@ -284,13 +284,13 @@ class JetsonYOLODetector:
 
 def main():
     parser = argparse.ArgumentParser(description='Jetson YOLO目标检测')
-    parser.add_argument('--model', type=str, default='best.pt', 
+    parser.add_argument('--model', type=str, default='yolov8n.pt', 
                        help='YOLO模型路径 (默认: yolov8n.pt)')
     parser.add_argument('--conf', type=float, default=0.5, 
                        help='置信度阈值 (默认: 0.5)')
     parser.add_argument('--device', type=str, default='cuda', 
                        choices=['cuda', 'cpu'], help='计算设备')
-    parser.add_argument('--source', type=str, default='camera', 
+    parser.add_argument('--source', type=str, default='0', 
                        help='输入源: camera, 摄像头ID(如6), 或视频文件路径')
     parser.add_argument('--test-camera', action='store_true',
                        help='仅测试摄像头是否可用，不运行检测')

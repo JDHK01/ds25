@@ -245,6 +245,57 @@ class DetectionManager:
             return None
         return max(detections, key=lambda d: d.area)
     
+    def get_detection_counts(self, detections: List[DetectionResult]) -> Dict[str, int]:
+        """
+        统计检测结果中各类别物体的数量
+        
+        Args:
+            detections: 检测结果列表
+            
+        Returns:
+            各类别的数量统计，格式: {'elephant': 1, 'monkey': 2, 'peacock': 3, 'wolf': 0, 'tiger': 1}
+        """
+        # 初始化所有类别计数为0
+        counts = {class_name: 0 for class_name in self.class_names}
+        
+        # 统计每个检测结果的类别
+        for detection in detections:
+            if detection.class_name in counts:
+                counts[detection.class_name] += 1
+        
+        return counts
+    
+    def format_detection_result(self, detections: List[DetectionResult]) -> str:
+        """
+        将检测结果格式化为指定格式
+        
+        Args:
+            detections: 检测结果列表
+            
+        Returns:
+            格式化字符串，如: '{e1m2p3w0t1}'
+        """
+        counts = self.get_detection_counts(detections)
+        
+        # 类别映射到缩写
+        class_mapping = {
+            'elephant': 'e',
+            'monkey': 'm', 
+            'peacock': 'p',
+            'wolf': 'w',
+            'tiger': 't'
+        }
+        
+        # 格式化为字符串
+        result_parts = []
+        for class_name in self.class_names:  # 按照固定顺序
+            if class_name in class_mapping:
+                abbreviation = class_mapping[class_name]
+                count = counts[class_name]
+                result_parts.append(f"{abbreviation}{count}")
+        
+        return '{' + ''.join(result_parts) + '}'
+    
     def get_detection_summary(self) -> Dict:
         """获取检测统计摘要"""
         if not self.detection_history:
@@ -343,10 +394,19 @@ if __name__ == "__main__":
                 for i, detection in enumerate(detections, 1):
                     print(f"  {i}. {detection.class_name} - 置信度: {detection.confidence:.2f}")
                 
+                # 显示统计结果
+                counts = detector.get_detection_counts(detections)
+                print(f"物体统计: {counts}")
+                
+                # 显示格式化结果
+                formatted_result = detector.format_detection_result(detections)
+                print(f"格式化结果: {formatted_result}")
+                
                 # 保存检测信息
                 detector.save_detection_info(waypoint_name, position, detections)
             else:
                 print("未检测到物体")
+                print("格式化结果: {e0m0p0w0t0}")
                 detector.save_detection_info(waypoint_name, position, [])
             
             time.sleep(1)  # 模拟飞行间隔

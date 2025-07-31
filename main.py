@@ -13,16 +13,22 @@
 import sys
 sys.path.append("/home/by/wrj/mycontrol")
 sys.path.append("/home/by/wrj/vision/cv")
+sys.path.append("/home/by/wrj/lib")
 from flightpath import *
 from control import *
 from mono_camera import *
 from detect_manager import *
+from generate_system import *
+from ser import SerialPort
 
 import asyncio
 import time
+import threading
+import queue
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from enum import Enum
+from datetime import datetime
 from mavsdk import System
 from mavsdk.offboard import (OffboardError, PositionNedYaw, VelocityBodyYawspeed)
 from mavsdk.telemetry import LandedState
@@ -36,24 +42,116 @@ from mavsdk.telemetry import LandedState
     #         pos_vel_ned.position.down_m,
     #         0.0  # yaw暂时设为0
     #     )
-DURATION = 3
-HEIGHT = -1.1 
 
-# 创建了一个字典, 键是点的名称, 值是点的坐标
-def generate_coordinate_system():
-    """动态生成坐标系统"""
-    # 返回字典
-    coordinates = {}
-    for row in range(1, 8):  # B1 到 B7
-        for col in range(1, 10):  # A1 到 A9
-            # 从 A1 到 A9 对应 x 坐标从 4.0 到 0.0 (递减)
-            x = (9 - col) * 0.5
-            # 从 B1 到 B7 对应 y 坐标从 0.0 到 3.0
-            y = (row - 1) * 0.5
-            point_name = f"A{col}B{row}"
-            coordinates[point_name] = (x, y)
-    return coordinates
+
+def send_detection_result(waypoint_name: str, detections: list, detection_manager: DetectionManager) -> dict:
+    """
+    发送检测结果
+    Args:
+        waypoint_name: 当前航点名称
+        detections: 检测结果列表
+        detection_manager: 检测管理器
+        
+    Returns:
+        包含位置和检测结果的字典
+    """
+    try:
+        # 格式化结果
+        # counts = detection_manager.get_detection_counts(detections)
+        formatted_result = detection_manager.format_detection_result(detections)
+        # 汇总数据
+        message = {
+            'position': waypoint_name,           # 例如: "A1B1"
+            'detections': formatted_result,      # 例如: "{e1m2p3w0t1}"
+            'timestamp': datetime.now().isoformat()# 预留接口, 丰富功能
+        }
+        # 汇总的信息发送接口
+        print(f"发送检测结果: 位置={message['position']}, 检测={message['detections']}")
+        return message
+    except Exception as e:
+        print(f"❌ 发送检测结果时出错: {e}")
+    
+
+# 读取当前位置
+async def get_current_position(drone) -> Tuple[float, float, float, float]:
+    """获取当前位置和yaw角度"""
+    # 先获取yaw角度
+    async for attitude in drone.telemetry.attitude_euler():
+        yaw_deg = attitude.yaw_deg
+        break
+    else:
+        yaw_deg = 0.0
+        
+    # 再获取位置
+    async for pos_vel_ned in drone.telemetry.position_velocity_ned():
+        # 加入我自己的坐标转换逻辑
+        return mytf(
+            pos_vel_ned.position.north_m,
+            pos_vel_ned.position.east_m,
+            pos_vel_ned.position.down_m,
+            yaw_deg
+        )
+    
+
 COORDINATES = generate_coordinate_system()
+DURATION = 3
+HEIGHT = -1.1
+
+class WaypointListener:
+    """监听航点消息的类"""
+    def __init__(self, serial_port='/dev/ttyUSB0', baud_rate=9600):
+        self.serial_port = serial_port
+        self.baud_rate = baud_rate
+        self.ser_port = None
+        self.waypoint_queue = queue.Queue()
+        self.is_running = False
+    
+    def handle_waypoint_message(self, content, full_packet):
+        """处理航点消息"""
+        try:
+            print(f"收到航点消息: {content}")
+            waypoint_list = content.split(',')
+            waypoint_list = [wp.strip() for wp in waypoint_list if wp.strip()]
+            
+            if waypoint_list:
+                self.waypoint_queue.put(waypoint_list)
+                print(f"航点已加入队列: {waypoint_list}")
+            else:
+                print("收到空航点列表")
+        except Exception as e:
+            print(f"处理航点消息错误: {e}")
+    
+    def start_listening(self):
+        """开始监听串口消息"""
+        try:
+            self.ser_port = SerialPort(port=self.serial_port, baudrate=self.baud_rate)
+            if not self.ser_port.open():
+                print(f"无法打开串口 {self.serial_port}")
+                return False
+            
+            self.ser_port.register_packet_handler("#", self.handle_waypoint_message)
+            self.ser_port.start_receiving()
+            self.is_running = True
+            print(f"开始监听串口 {self.serial_port} 的航点消息...")
+            return True
+        except Exception as e:
+            print(f"启动串口监听失败: {e}")
+            return False
+    
+    def stop_listening(self):
+        """停止监听串口消息"""
+        if self.ser_port:
+            self.ser_port.close()
+            self.is_running = False
+            print("停止监听串口消息")
+    
+    def get_waypoints(self, timeout=None):
+        """获取航点列表"""
+        try:
+            return self.waypoint_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None 
+
 # 效果预览
 {
 # A9B1: (0.0, 0.0)
@@ -119,27 +217,8 @@ COORDINATES = generate_coordinate_system()
 # A3B7: (3.0, 3.0)
 # A2B7: (3.5, 3.0)
 # A1B7: (4.0, 3.0)
+# A9A9: (0.0, 0.0)# 已经遍历完所有航点的标志
 }
-
-# 读取当前位置
-async def get_current_position(drone) -> Tuple[float, float, float, float]:
-    """获取当前位置和yaw角度"""
-    # 先获取yaw角度
-    async for attitude in drone.telemetry.attitude_euler():
-        yaw_deg = attitude.yaw_deg
-        break
-    else:
-        yaw_deg = 0.0
-        
-    # 再获取位置
-    async for pos_vel_ned in drone.telemetry.position_velocity_ned():
-        # 加入我自己的坐标转换逻辑
-        return mytf(
-            pos_vel_ned.position.north_m,
-            pos_vel_ned.position.east_m,
-            pos_vel_ned.position.down_m,
-            yaw_deg
-        )
 
 # 处理提供的航点列表的函数
 def create_waypoint_flight_plan(waypoint_names: List[str], height: float = HEIGHT, duration: float = DURATION) -> FlightPathManager:
@@ -188,7 +267,12 @@ async def approach_detected_objects(drone, vision_system: VisionGuidanceSystem,
         print("未检测到物体，继续下一个航点")
         return
     
-    print(f"检测到 {len(detections)} 个物体，开始逐个逼近")
+    # 显示检测统计信息
+    counts = detection_manager.get_detection_counts(detections)
+    formatted_result = detection_manager.format_detection_result(detections)
+    print(f"检测到 {len(detections)} 个物体: {counts}")
+    print(f"格式化结果: {formatted_result}")
+    print("开始逐个逼近")
     
     # 对每个检测到的物体进行逼近
     for i, detection in enumerate(detections, 1):
@@ -213,8 +297,23 @@ async def approach_detected_objects(drone, vision_system: VisionGuidanceSystem,
     print(f"🏁 航点 {waypoint_name} 的所有物体逼近完成")
 
 # 运行
-async def run(user_waypoint_list: List[str] = None):
+async def run(user_waypoint_list: List[str] = None, enable_serial_listening: bool = False):
     """边飞行边检测的主函数"""
+    waypoint_listener = None
+    
+    if enable_serial_listening:
+        waypoint_listener = WaypointListener()
+        if waypoint_listener.start_listening():
+            print("等待串口航点消息...")
+            user_waypoint_list = waypoint_listener.get_waypoints(timeout=30)
+            if user_waypoint_list:
+                print(f"收到航点列表: {user_waypoint_list}")
+            else:
+                print("未收到航点消息，使用默认航点")
+                user_waypoint_list = ["A9B1", "A8B1", "A7B1", "A3B3"]
+        else:
+            print("串口监听启动失败，使用默认航点")
+            user_waypoint_list = ["A9B1", "A8B1", "A7B1", "A3B3"]
     # ==================== 无人机初始化 ====================
     drone = System()
     await drone.connect(system_address="udp://127.0.0.1:14540")
@@ -287,19 +386,16 @@ async def run(user_waypoint_list: List[str] = None):
     
     # ==================== 创建检测管理器 ====================
     detection_manager = DetectionManager(
-        model_path="vision/yolo/dump/best.pt",
+        model_path="vision/yolo/best.pt",
         conf_threshold=0.5,
         device="cuda",  # 或者 "cuda" 如果有GPU
         camera_id=0
     )
     
     # ==================== 定义飞行路径 ====================
-    
-    print(f"使用用户提供的航点列表: {user_waypoint_list}")
     flight_manager = create_waypoint_flight_plan(user_waypoint_list, HEIGHT, DURATION)
     
     print(f"飞行路径规划完成，共 {len(flight_manager.waypoints)} 个航点")
-    
     # 开始任务
     flight_manager.start_mission()
     
@@ -337,6 +433,28 @@ async def run(user_waypoint_list: List[str] = None):
                     waypoint_position
                 )
                 
+                # 获取检测统计和格式化结果
+                if detections:
+                    counts = detection_manager.get_detection_counts(detections)
+                    formatted_result = detection_manager.format_detection_result(detections)
+                    print(f"🎯 航点 {current_waypoint.name} 检测统计: {counts}")
+                    print(f"📊 格式化结果: {formatted_result}")
+                    
+                    # 发送检测结果
+                    detection_message = send_detection_result(
+                        current_waypoint.name, detections, detection_manager
+                    )
+                else:
+                    print(f"❌ 航点 {current_waypoint.name} 未检测到物体")
+                    # 发送空检测结果
+                    empty_message = {
+                        'position': current_waypoint.name,
+                        'detections': '{e0m0p0w0t0}',
+                        'total_objects': 0,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    print(f"📡 发送空检测结果: {empty_message}")
+                
                 # 更新检测数量
                 flight_manager.update_detection_count(len(detections))
                 
@@ -373,10 +491,8 @@ async def run(user_waypoint_list: List[str] = None):
             print(f"📊 任务进度: {progress['progress_percentage']:.1f}% ({progress['completed_waypoints']}/{progress['total_waypoints']})")
         
         print("🏁 所有航点飞行完成")
-        
         # ==================== 任务总结 ====================
         flight_manager.end_mission()
-        
         # 显示检测统计
         detection_summary = detection_manager.get_detection_summary()
         print(f"\n📈 检测统计:")
@@ -385,7 +501,6 @@ async def run(user_waypoint_list: List[str] = None):
         print(f"   检测率: {detection_summary['detection_rate']:.1%}")
         if detection_summary['most_common_class']:
             print(f"   最常见物体: {detection_summary['most_common_class'][0]} ({detection_summary['most_common_class'][1]}次)")
-        
         # 导出日志
         try:
             flight_manager.export_flight_log("flight_mission_log.txt")
@@ -393,7 +508,6 @@ async def run(user_waypoint_list: List[str] = None):
             print("📄 任务日志已导出")
         except Exception as e:
             print(f"⚠️  导出日志时出错: {e}")
-        
     except Exception as e:
         print(f"❌ 飞行过程中发生异常: {e}")
         
@@ -421,6 +535,8 @@ async def run(user_waypoint_list: List[str] = None):
             # 清理资源
             vision_system.cleanup()
             detection_manager.cleanup()
+            if waypoint_listener:
+                waypoint_listener.stop_listening()
             print("✅ 资源清理完成")
         except Exception as e:
             print(f"资源清理失败: {e}")
@@ -428,22 +544,49 @@ async def run(user_waypoint_list: List[str] = None):
         print("🎉 任务完成！")
 
 # 主程序入口
+# --- 串口设置 ---
+SERIAL_PORT = '/dev/ttyUSB0'
+BAUD_RATE = 9600
+
+# --- 发送数据包协议定义 ---
+LORA_HEADER_GOODS = "$GOODS,"
+LORA_HEADER_X = "$XDATA,"
+LORA_HEADER_Y = "$YDATA,"
+LORA_HEADER_VELOCITY = "$VELOCITY,"
+LORA_HEADER_SEARCH = "$SEARCH,"
+LORA_HEADER_SEARCHID = "$$SEARCHID,"
+LORA_HEADER_COMMAND_TJC = "%COMMAND,"
+REICEIVE = '#'
+
+# --- 接收数据包协议定义 ---
+LORA_HEADER_COMMAND_RECV = "$$COMMAND,"
+
+# --- 通用包尾 ---
+LORA_PACKET_FOOTER = "%"
+
 if __name__ == "__main__":
-    # 用户可以在这里指定航点列表
-    # 示例: ["A1B1", "A2B2", "A3B3"] 格式
-    user_waypoints = None  # 如果为None，将使用默认航点
-    
-    # 也可以通过命令行参数指定
-    if len(sys.argv) > 1:
-        user_waypoints = sys.argv[1:]  # 从命令行获取航点列表
-        print(f"从命令行获取航点列表: {user_waypoints}")
-    
-    # 运行主程序
+    # 模拟传入过程
     try:
-        asyncio.run(run(user_waypoints))
+        # 创建串口对象
+        ser_port = SerialPort(port=SERIAL_PORT, baudrate=BAUD_RATE)
+        if not ser_port.open():
+            print("无法打开")
+
+        ser_port.register_packet_handler(REICEIVE, command_handler)
+
     except KeyboardInterrupt:
-        print("\n🛑 用户中断程序")
+        print("\n程序被用户中断")
     except Exception as e:
-        print(f"❌ 程序运行时出错: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"发生错误: {e}")
+    finally:
+        # 确保串口被关闭
+        if 'ser_port' in locals():
+            ser_port.close()
+            
+    # user_waypoints = ["A9B1", "A8B1", "A7B1", "A3B3"]
+    
+    # 启用串口监听模式，注释掉下面一行则使用默认航点
+    # asyncio.run(run(user_waypoints, enable_serial_listening=True))
+    
+    # 默认模式（使用预设航点）
+    # asyncio.run(run(user_waypoints))
