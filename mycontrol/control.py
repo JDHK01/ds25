@@ -15,7 +15,7 @@ async def goto_position_ned(drone, north, east, down, yaw,duiration):
     await asyncio.sleep(duiration)
     print("到达目标位置")
 
-def mytf((in_pos_n,in_pos_e,in_pos_d, in_yaw)):
+def mytf(in_pos_n,in_pos_e,in_pos_d, in_yaw):
     #in 是从无人机读取的ned，out是转换后的ned（前右下）
     out_pos_n = in_pos_e
     out_pos_e = -in_pos_n

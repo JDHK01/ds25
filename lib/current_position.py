@@ -1,3 +1,5 @@
+from typing import List, Optional, Tuple
+
 # 读取当前位置
 async def get_current_position(drone) -> Tuple[float, float, float, float]:
     """获取当前位置和yaw角度"""

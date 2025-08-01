@@ -1,3 +1,6 @@
+from typing import List, Optional, Tuple
+
+
 # 预计算的坐标系统 - 所有可能的航点坐标 (一次性生成，快速查找)
 PRECOMPUTED_COORDINATES = {}
 

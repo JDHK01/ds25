@@ -233,7 +233,10 @@ def main():
             return
         
 
+        ser_port.send_lora_packet('$ANI' ,'A0B2' + 'e0m0p0w0t188', footer='%')
+        ser_port.send_lora_packet('$ANI' ,'A0B9' + 'e0m0p0w0t188', footer='%')
 
+        return 
         ser_port.send_goods_packet(1, f"D{1}")
         time.sleep(1)
         ser_port.send_goods_packet(2, f"C{1}")

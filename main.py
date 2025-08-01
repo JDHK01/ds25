@@ -10,11 +10,14 @@
 
 
 import sys
-sys.path.append("/home/by/wrj/mycontrol")
-sys.path.append("/home/by/wrj/vision/cv")
-sys.path.append("/home/by/wrj/lib")
-sys.path.append("/home/by/wrj/gc")
-from plan_pro_max import *
+sys.path.append("/home/by/ds25/temp/mycontrol")
+sys.path.append("/home/by/ds25/temp/vision/cv")
+sys.path.append("/home/by/ds25/temp/vision/yolo")
+
+sys.path.append("/home/by/ds25/temp/lib")
+sys.path.append("/home/by/ds25/temp/gc")
+from detect import *
+import plan_pro_max
 from current_position import *
 from flightpath import *
 from control import *
@@ -284,10 +287,10 @@ async def approach_detected_objects(drone, vision_system: VisionGuidanceSystem,
     print(f"🏁 航点 {waypoint_name} 的所有物体逼近完成")
 
 # 运行
-async def run(user_waypoint_list: List[str] = None, enable_serial_listening: bool = False):
+async def run():
     # ====================接收串口屏的消息=======================
     DRONERECEIVE = '#'
-    DRONESEND = '$'
+    DRONESEND = '$ANI'
     LORA_PACKET_FOOTER = "%"
     # --- 串口设置 ---
     SERIAL_PORT = '/dev/ttyUSB0'
@@ -297,14 +300,13 @@ async def run(user_waypoint_list: List[str] = None, enable_serial_listening: boo
     if not ser_port.open():
         return
     
-    mylist = []
-
     # 保持程序运行，等待接收数据
     def command_handler(content, full_packet):
         # ----------------------------------解析字符串----------------------------
         global mylist
-        mylist = content
+        mylist = content.split(',')
         print(f"收到命令: {content}")
+        print(mylist)
 
     ser_port.register_packet_handler(DRONERECEIVE, command_handler)
     ser_port.start_receiving()
@@ -312,10 +314,14 @@ async def run(user_waypoint_list: List[str] = None, enable_serial_listening: boo
     print("等待接收数据")
     while ser_port.receivetime < 1:
         time.sleep(0.1)
-    print('收到禁飞区:'+list)
-    routine = get_mapping_result(tuple(sorted(mylist)))
-    print('使用的航点清单:'+routine)
+    print('收到禁飞区:')
+    print(mylist)
+    routine = plan_pro_max.get_mapping_result(tuple(sorted(mylist)))
+    print('使用的航点清单:')
+    print(routine)
 
+    # 发送的api
+    ser_port.send_lora_packet(DRONESEND ,'A1B1' + format_animal_counts(result), footer=LORA_PACKET_FOOTER)
     # ====================点亮小灯作为指示灯:防止发生意外=====================
 
 
@@ -575,4 +581,5 @@ async def run(user_waypoint_list: List[str] = None, enable_serial_listening: boo
             ser_port.close()
 
 if __name__ == "__main__":
+    mylist = []
     asyncio.run(run())
