@@ -4,46 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a drone control system for competition tasks (边飞行边检测), implementing real-time flight path following with simultaneous target detection and visual navigation. The system combines MAVSDK-Python drone control with computer vision for autonomous drone operations.
+This is a competition-grade drone control system for "边飞行边检测" (flight while detecting) operations. The system orchestrates autonomous flight path following with simultaneous computer vision-based target detection and visual navigation, designed specifically for wildlife monitoring competitions.
 
 ## Key Architecture Components
 
 ### Core System
-- **main.py** - Main flight control loop that orchestrates path following and target detection
-- **MAVSDK Integration** - Uses MAVSDK-Python for drone communication and control
-- **Vision System** - Computer vision for target detection and visual navigation
-- **Path Planning** - Advanced path planning algorithms for optimal flight routes
+- **main.py/main_example.py** - Primary flight control orchestrators that integrate all subsystems
+- **drone_ctrl.py** - Alternative drone controller with A1B1-A9B7 grid waypoint system
+- **MAVSDK Integration** - Uses MAVSDK-Python for MAVLink communication and offboard control
+- **Serial Communication** - Ground station command integration via `lib/ser.py`
 
 ### Flight Control (`mycontrol/`)
-- **control.py** - Basic position control functions with coordinate transformation
-- **mission.py** - Mission execution logic
+- **control.py** - Core position/velocity control with critical `mytf()` coordinate transformation function
+- **flightpath.py** - Sophisticated flight path management with waypoint status tracking (PENDING → IN_PROGRESS → ARRIVED → COMPLETED)
+- **mission.py** - Mission execution logic and progress tracking
+- **drone_ctrl.py** - Path label system with A1B1-A9B7 grid mapping to NED coordinates
 
 ### Path Planning (`gc/`)
-- **path_planner.py** - Advanced wildlife patrol system with multiple path planning algorithms:
+- **plan_pro_max.py** - Advanced wildlife patrol system with multiple optimization algorithms:
   - Enhanced greedy algorithm
   - Spiral path planning
   - Zigzag pattern planning
   - Obstacle avoidance and forbidden zone handling
-- **ground_station.py** - Ground control station interface
-- **drone_communication.py** - Drone communication protocols
+- **visual.py** - Path visualization and comparison tools
+- **output/** - Generated path files and visualizations
 
 ### Vision System (`vision/`)
-- **mono_camera.py** - Complete vision guidance system with:
-  - PID-controlled visual servoing
-  - QR code detection for target tracking
-  - Two modes: DOWN (vertical alignment) and FRONT (horizontal alignment)
-  - Camera offset compensation
-  - Real-time task state management
-- **yolo/** - YOLO object detection models and inference
-- **cv/** - Computer vision utilities
+- **cv/mono_camera.py** - Complete vision guidance system with PID-controlled visual servoing
+- **yolo/detect.py** - YOLO inference engine with ONNX runtime for animal detection
+- **yolo/best9999.onnx** - Trained model for competition animals: ['elephant', 'monkey', 'peacock', 'wolf', 'tiger']
+- **detect_manager.py** - Unified detection interface integrating YOLO with flight system
+
+### Hardware Integration (`lib/`)
+- **ser.py** - Serial communication for real-time waypoint commands from ground station
+- **current_position.py** - Position tracking and coordinate system management
+- **RealSenseCamera.py** - Intel RealSense camera integration
 
 ### Utility Tools (`util/`)
-- **Camera Tools GUI** - Comprehensive camera testing and configuration suite:
-  - Device scanning and performance testing
-  - Color space testing and image capture
-  - Video recording with multiple formats
-  - Real-time parameter adjustment
-- **Requirements**: PyQt5, OpenCV, NumPy, psutil, matplotlib
+- **Comprehensive camera tools suite** with PyQt5 GUIs for device scanning, performance testing, and video recording
 
 ## Development Commands
 
@@ -58,9 +56,9 @@ python3 test_main.py
 
 ### Path Planning
 ```bash
-# Run path planning visualization
+# Run advanced path planning with visualization and algorithm comparison
 cd gc/
-python3 path_planner.py
+python3 plan_pro_max.py
 ```
 
 ### Vision System Testing
@@ -69,9 +67,9 @@ python3 path_planner.py
 cd vision/cv/
 python3 mono_camera.py
 
-# YOLO model testing
+# YOLO animal detection testing
 cd vision/yolo/
-python3 test.py
+python3 detect.py
 ```
 
 ### Camera Tools
@@ -102,28 +100,30 @@ pip3 install mavsdk opencv-python numpy matplotlib psutil PyQt5
 
 ## Important Development Notes
 
-### Coordinate System Transformations
-The system uses a custom coordinate transformation (`mytf()` function in control.py) to convert between drone NED coordinates and the local coordinate system. This is critical for proper navigation.
+### Critical Bugs to Avoid
+- **mytf() function**: Must use `ctrl.Drone_Controller.mytf()` or import properly - function converts NED coordinates to local coordinate system
+- **pilot_plan() method**: Takes two parameters (drone, ser_port) but internally initializes camera and detector
+- **Array indexing**: In drone_ctrl.py:275, `self.path_label[i]` can cause IndexError - use `self.path_label[i-1]` instead
 
-### Vision System Configuration
-The vision guidance system supports two operational modes:
-- **TargetMode.DOWN**: Camera pointing downward for vertical alignment
-- **TargetMode.FRONT**: Camera pointing forward for horizontal approach
+### Coordinate System Architecture
+- **NED to Local**: Uses `mytf()` function in control.py for coordinate transformation between drone NED and local grid system
+- **A1B1-A9B7 Grid**: Waypoint system maps to precise NED coordinates via `label_map` dictionary
+- **Competition Format**: Serial communication sends animal detection results in specific format (e.g., "A8B1e2m0p1w0t0")
 
-Camera offset compensation is built-in to account for physical camera placement relative to drone center.
+### Flight Control Flow
+1. **Serial Command Reception** → **Path Planning** → **Waypoint Navigation** → **Target Detection** → **Visual Servoing** → **Result Transmission**
+2. **One-time Detection**: Each waypoint processed exactly once via `visit_status` tracking
+3. **Emergency Landing**: Automatic landing sequences from specific waypoints (A8B1, A9B2)
 
-### Path Planning Algorithms
-The path planner automatically evaluates multiple algorithms and selects the optimal path based on:
-- Total path distance
-- Coverage completeness  
-- Obstacle avoidance
-- Revisit minimization
+### Vision System Integration
+- **Detection Pipeline**: YOLO animal detection → Visual servoing approach → Continue mission
+- **Competition Animals**: Specifically trained for ['elephant', 'monkey', 'peacock', 'wolf', 'tiger']
+- **Real-time Processing**: 50Hz control loop with camera buffer optimization
 
-### Testing Strategy
-- **test_main.py**: Complete flight simulation without hardware
-- **Camera tools**: Comprehensive camera testing and calibration
-- **Vision system**: Standalone testing with real-time feedback
-- **Path planner**: Visualization and comparison of different algorithms
+### Hardware Dependencies
+- **Serial Port**: `/dev/ttyUSB0` at 9600 baud for ground station communication
+- **Camera Device**: Default ID 0 with 640x480 resolution and 1-frame buffer
+- **MAVSDK Connection**: `udp://127.0.0.1:14540` for simulation, configurable for hardware
 
 ## Hardware Integration
 
