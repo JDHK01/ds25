@@ -1,4 +1,5 @@
 import serial
+import serial.tools.list_ports
 import time
 import threading
 
@@ -23,10 +24,10 @@ LORA_HEADER_COMMAND_RECV = "$$COMMAND,"
 LORA_PACKET_FOOTER = "%"
 
 class SerialPort:
-    def __init__(self, port, baudrate=9600, timeout=0.2):
+    def __init__(self, port=None, baudrate=9600, timeout=0.2):
         """
         初始化串口对象
-        :param port: 串口号
+        :param port: 串口号，如果为None则自动探测
         :param baudrate: 波特率
         :param timeout: 超时时间
         """
@@ -45,18 +46,67 @@ class SerialPort:
         # 处理函数
         self.packet_handlers = {}  # 存储不同包头的处理函数
 
+    @staticmethod
+    def probe_usb_ports():
+        """探测可用的USB串口"""
+        available_ports = []
+        potential_ports = ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyUSB2', '/dev/ttyUSB3']
+        
+        # 使用pyserial自动探测
+        try:
+            ports = serial.tools.list_ports.comports()
+            for port in ports:
+                if 'USB' in port.device or 'ttyUSB' in port.device:
+                    available_ports.append(port.device)
+                    print(f"探测到USB串口: {port.device} - {port.description}")
+        except Exception as e:
+            print(f"自动探测串口失败: {e}")
+        
+        # 手动尝试常见端口
+        for port in potential_ports:
+            if port not in available_ports:
+                try:
+                    test_ser = serial.Serial(port, 9600, timeout=0.1)
+                    test_ser.close()
+                    available_ports.append(port)
+                    print(f"手动探测到串口: {port}")
+                except:
+                    pass
+        
+        return available_ports
         
     def open(self):
-        """打开串口"""
-        try:
-            # 创建串口对象
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
-            print(f"成功打开串口: {self.port} 波特率: {self.baudrate}.")
-            time.sleep(2)  # 等待串口稳定连接
-            return True
-        except Exception as e:
-            print(f"打开串口失败: {e}")
-            return False
+        """打开串口，支持自动探测"""
+        if self.port is None:
+            # 自动探测可用端口
+            available_ports = self.probe_usb_ports()
+            if not available_ports:
+                print("未找到可用的USB串口")
+                return False
+            self.port = available_ports[0]  # 使用第一个可用端口
+            print(f"自动选择串口: {self.port}")
+        
+        # 尝试打开指定端口，如果失败则尝试其他端口
+        ports_to_try = [self.port] if self.port else []
+        if self.port and self.port not in ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyUSB2']:
+            ports_to_try.extend(['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyUSB2'])
+        elif not self.port:
+            ports_to_try = self.probe_usb_ports()
+        
+        for port in ports_to_try:
+            try:
+                print(f"尝试打开串口: {port}")
+                self.ser = serial.Serial(port, self.baudrate, timeout=self.timeout)
+                self.port = port  # 更新实际使用的端口
+                print(f"成功打开串口: {self.port} 波特率: {self.baudrate}")
+                time.sleep(2)  # 等待串口稳定连接
+                return True
+            except Exception as e:
+                print(f"端口 {port} 打开失败: {e}")
+                continue
+        
+        print("所有尝试的串口都无法打开")
+        return False
     
     def close(self):
         """关闭串口"""

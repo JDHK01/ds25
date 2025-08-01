@@ -70,12 +70,14 @@ async def run():
     DRONERECEIVE = '#'
     DRONESEND = '$ANI'
     LORA_PACKET_FOOTER = "%"
-    # --- 串口设置 ---
-    SERIAL_PORT = '/dev/ttyUSB0'
+    # --- 串口设置 (自动探测) ---
     BAUD_RATE = 9600
 
-    ser_port = SerialPort(port=SERIAL_PORT, baudrate=BAUD_RATE)
+    # 创建串口对象，不指定port让其自动探测
+    ser_port = SerialPort(port=None, baudrate=BAUD_RATE)
+    print("正在探测并连接串口...")
     if not ser_port.open():
+        print("串口连接失败，程序退出")
         return
 
     # 保持程序运行，等待接收数据
