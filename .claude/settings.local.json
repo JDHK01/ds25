@@ -4,7 +4,10 @@
       "Bash(python:*)",
       "Bash(mv:*)",
       "Bash(ls -la /Users/yqz/by/wrj/)",
-      "mcp__ide__executeCode"
+      "mcp__ide__executeCode",
+      "Bash(pip3 install:*)",
+      "Bash(mkdir:*)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }
