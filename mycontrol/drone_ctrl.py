@@ -1,8 +1,10 @@
 import sys
 sys.path.append("/home/by/ds25/temp/lib")
 sys.path.append("/home/by/ds25/temp/vision/yolo")
+sys.path.append("/home/by/ds25/temp/util")
 from ser import * 
 from detect import *
+from camera_device_scanner import CameraScanner
 
 import asyncio
 import math
@@ -291,7 +293,9 @@ class Drone_Controller:
                 cap.grab()
             ret, frame = cap.retrieve()
             if ret:
-                result = detector.detect_animals(frame, show_result=False)
+                # 视野裁切：从左上角(180,50)到(540,410)
+                cropped_frame = frame[50:410, 180:540]
+                result = detector.detect_animals(cropped_frame, show_result=False)
                 if not result:
                     print("未识别到")
                 else:
@@ -374,15 +378,40 @@ class Drone_Controller:
             return ''.join(parts)
     
     # ===============================视觉跟踪相关方法================================
+    def _find_available_camera(self):
+        """自动查找可用的摄像头设备"""
+        scanner = CameraScanner(max_devices=5)
+        devices = scanner.scan_devices(verbose=False)
+        
+        if not devices:
+            print("警告: 未找到任何可用摄像头")
+            return 0  # 返回默认设备ID
+        
+        # 优先选择设备ID较小的摄像头
+        available_device = min(devices, key=lambda d: d.device_id)
+        print(f"自动选择摄像头设备ID: {available_device.device_id}")
+        return available_device.device_id
+
     def init_camera(self):
         """初始化相机"""
         if self.camera is None:
-            self.camera = cv2.VideoCapture(self.camera_config.device_id)
+            # 如果配置的设备ID不可用，自动查找可用设备
+            device_id = self.camera_config.device_id
+            cap_test = cv2.VideoCapture(device_id)
+            if not cap_test.isOpened():
+                cap_test.release()
+                print(f"摄像头设备ID {device_id} 不可用，正在自动查找...")
+                device_id = self._find_available_camera()
+                self.camera_config.device_id = device_id
+            else:
+                cap_test.release()
+            
+            self.camera = cv2.VideoCapture(device_id)
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_config.width)
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_config.height)
             self.camera.set(cv2.CAP_PROP_FPS, self.camera_config.fps)
             self.camera.set(cv2.CAP_PROP_BUFFERSIZE, self.camera_config.buffer_size)
-            print(f"相机初始化成功 - 设备ID: {self.camera_config.device_id}")
+            print(f"相机初始化成功 - 设备ID: {device_id}")
     
     def compute_pixel_error(self, target_center: Tuple[int, int]) -> Tuple[float, float]:
         """计算目标中心与画面中心的像素误差"""
@@ -439,8 +468,11 @@ class Drone_Controller:
         if self.task_state == TaskState.COMPLETED:
             return frame, DroneCommand(0.0, 0.0, 0.0)
 
+        # 视野裁切：从左上角(180,50)到(540,410)
+        cropped_frame = frame[50:410, 180:540]
+        
         # 使用传入的检测器进行检测
-        result = detector.detect_animals(frame, show_result=False)
+        result = detector.detect_animals(cropped_frame, show_result=False)
         command = None
         
         # 将检测结果转换为适合跟踪的格式
@@ -453,6 +485,11 @@ class Drone_Controller:
                     # 假设box格式为 [x1, y1, x2, y2, confidence]
                     if len(box) >= 4:
                         x1, y1, x2, y2 = box[:4]
+                        # 将裁切区域的坐标转换回原始帧坐标
+                        x1 += 180
+                        y1 += 50
+                        x2 += 180
+                        y2 += 50
                         center_x = (x1 + x2) // 2
                         center_y = (y1 + y2) // 2
                         area = (x2 - x1) * (y2 - y1)
@@ -637,8 +674,20 @@ class Drone_Controller:
         #=============检测器初始化=============
         # 创建检测器
         detector = YOLOv8AnimalDetector('/home/by/ds25/temp/vision/yolo/best9999.onnx')
+        
+        # 自动查找可用摄像头设备
+        device_id = 0  # 默认设备ID
+        cap_test = cv2.VideoCapture(device_id)
+        if not cap_test.isOpened():
+            cap_test.release()
+            print(f"摄像头设备ID {device_id} 不可用，正在自动查找...")
+            device_id = self._find_available_camera()
+        else:
+            cap_test.release()
+        
         # 打开摄像头
-        cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(device_id)
+        print(f"使用摄像头设备ID: {device_id}")
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
