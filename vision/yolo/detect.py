@@ -484,21 +484,22 @@ def main():
         
         # 拼接成最终字符串
         return ''.join(parts)
+    
     start = time.time()
-    # 清空缓冲区，获取最新帧
-    for _ in range(2):
-        cap.grab()
-        ret, frame = cap.retrieve()
-        if ret:
-            result = detector.detect_animals(frame, show_result=False)
-            if not result:
-                print("未识别到")
-            else:
-                print("识别到")
-                ser_port.send_lora_packet(DRONESEND ,label + self.format_animal_counts(result), footer=LORA_PACKET_FOOTER)
-        else:
-            print("摄像头读取失败")    
-    # ret, frame = cap.read()
+    # # 清空缓冲区，获取最新帧
+    # for _ in range(2):
+    #     cap.grab()
+    #     ret, frame = cap.retrieve()
+    #     if ret:
+    #         result = detector.detect_animals(frame, show_result=False)
+    #         if not result:
+    #             print("未识别到")
+    #         else:
+    #             print("识别到")
+    #             ser_port.send_lora_packet(DRONESEND ,label + self.format_animal_counts(result), footer=LORA_PACKET_FOOTER)
+    #     else:
+    #         print("摄像头读取失败")    
+    ret, frame = cap.read()
     result = detector.detect_animals(frame, show_result=False)
     end = time.time()
     if not result:
