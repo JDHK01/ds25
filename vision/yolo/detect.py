@@ -463,10 +463,9 @@ def main():
         return
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    # 检查实际设置结果
-    width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-    height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-    print(f"实际分辨率：{int(width)}x{int(height)}")
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 设置缓冲区为1帧
+    cap.set(cv2.CAP_PROP_FPS, 30)  # 降低帧率
+
     def format_animal_counts(animal_dict):
         # 严格定义顺序：elephant(e) → monkey(m) → peacock(p) → wolf(w) → tiger(t)
         order = [
@@ -484,20 +483,31 @@ def main():
         
         # 拼接成最终字符串
         return ''.join(parts)
-    import time
-    start = time.time()
+
     ret, frame = cap.read()
     result = detector.detect_animals(frame, show_result=False)
-    end = time.time()
-
-    print(end-start)
-
     if not result:
         print("未识别到")
     else:
         print(result)
-        print('转换后:')
+    print('转换后:')
     print(format_animal_counts(result))
+
+    # print(end-start)
+    # start = time.time()
+    # for i in range(100):
+    #     ret, frame = cap.read()
+    #     result = detector.detect_animals(frame, show_result=False)
+    #     if not result:
+    #         print("未识别到")
+    #     else:
+    #         print(result)
+    #         print('转换后:')
+    #     print(format_animal_counts(result))
+    # end = time.time()
+
+    # print(end-start)
+
 
 
 
