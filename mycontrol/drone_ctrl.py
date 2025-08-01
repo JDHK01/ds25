@@ -293,7 +293,9 @@ class Drone_Controller:
                 cap.grab()
             ret, frame = cap.retrieve()
             if ret:
-                result = detector.detect_animals(frame, show_result=False)
+                # 视野裁切：从左上角(180,50)到(540,410)
+                cropped_frame = frame[50:410, 180:540]
+                result = detector.detect_animals(cropped_frame, show_result=False)
                 if not result:
                     print("未识别到")
                 else:
@@ -466,8 +468,11 @@ class Drone_Controller:
         if self.task_state == TaskState.COMPLETED:
             return frame, DroneCommand(0.0, 0.0, 0.0)
 
+        # 视野裁切：从左上角(180,50)到(540,410)
+        cropped_frame = frame[50:410, 180:540]
+        
         # 使用传入的检测器进行检测
-        result = detector.detect_animals(frame, show_result=False)
+        result = detector.detect_animals(cropped_frame, show_result=False)
         command = None
         
         # 将检测结果转换为适合跟踪的格式
@@ -480,6 +485,11 @@ class Drone_Controller:
                     # 假设box格式为 [x1, y1, x2, y2, confidence]
                     if len(box) >= 4:
                         x1, y1, x2, y2 = box[:4]
+                        # 将裁切区域的坐标转换回原始帧坐标
+                        x1 += 180
+                        y1 += 50
+                        x2 += 180
+                        y2 += 50
                         center_x = (x1 + x2) // 2
                         center_y = (y1 + y2) // 2
                         area = (x2 - x1) * (y2 - y1)
