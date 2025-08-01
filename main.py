@@ -9,17 +9,19 @@
 """
 
 
-
 import sys
 sys.path.append("/home/by/wrj/mycontrol")
 sys.path.append("/home/by/wrj/vision/cv")
 sys.path.append("/home/by/wrj/lib")
+sys.path.append("/home/by/wrj/gc")
+from plan_pro_max import *
+from current_position import *
 from flightpath import *
 from control import *
 from mono_camera import *
 from detect_manager import *
 from generate_system import *
-from ser import SerialPort
+from ser import * 
 
 import asyncio
 import time
@@ -33,17 +35,7 @@ from mavsdk import System
 from mavsdk.offboard import (OffboardError, PositionNedYaw, VelocityBodyYawspeed)
 from mavsdk.telemetry import LandedState
 
-# async def get_current_position(drone) -> Tuple[float, float, float, float]:
-#     """获取当前位置"""
-    # async for pos_vel_ned in drone.telemetry.position_velocity_ned():
-    #     return (
-    #         pos_vel_ned.position.north_m,
-    #         pos_vel_ned.position.east_m, 
-    #         pos_vel_ned.position.down_m,
-    #         0.0  # yaw暂时设为0
-    #     )
-
-
+# ======================预留的信息获取接口===================
 def send_detection_result(waypoint_name: str, detections: list, detection_manager: DetectionManager) -> dict:
     """
     发送检测结果
@@ -70,30 +62,10 @@ def send_detection_result(waypoint_name: str, detections: list, detection_manage
         return message
     except Exception as e:
         print(f"❌ 发送检测结果时出错: {e}")
-    
 
-# 读取当前位置
-async def get_current_position(drone) -> Tuple[float, float, float, float]:
-    """获取当前位置和yaw角度"""
-    # 先获取yaw角度
-    async for attitude in drone.telemetry.attitude_euler():
-        yaw_deg = attitude.yaw_deg
-        break
-    else:
-        yaw_deg = 0.0
-        
-    # 再获取位置
-    async for pos_vel_ned in drone.telemetry.position_velocity_ned():
-        # 加入我自己的坐标转换逻辑
-        return mytf(
-            pos_vel_ned.position.north_m,
-            pos_vel_ned.position.east_m,
-            pos_vel_ned.position.down_m,
-            yaw_deg
-        )
-    
-
-COORDINATES = generate_coordinate_system()
+# 使用优化的航点管理器 (预存储所有坐标，O(1)查找，单次处理保证)
+WAYPOINT_MANAGER = OPTIMIZED_WAYPOINT_MANAGER
+COORDINATES = WAYPOINT_MANAGER.coordinates  # 向后兼容
 DURATION = 3
 HEIGHT = -1.1
 
@@ -223,7 +195,7 @@ class WaypointListener:
 # 处理提供的航点列表的函数
 def create_waypoint_flight_plan(waypoint_names: List[str], height: float = HEIGHT, duration: float = DURATION) -> FlightPathManager:
     """
-    根据用户提供的航点名称列表创建飞行计划
+    根据用户提供的航点名称列表创建飞行计划 (使用优化的航点管理器)
     
     Args:
         waypoint_names: 航点名称列表，如 ["A1B1", "A2B2"]
@@ -233,10 +205,25 @@ def create_waypoint_flight_plan(waypoint_names: List[str], height: float = HEIGH
         配置好的FlightPathManager
     """
     
+    # 使用优化航点管理器验证航点列表
+    validation_result = WAYPOINT_MANAGER.batch_validate_waypoints(waypoint_names)
+    
+    # 输出验证结果
+    if validation_result['invalid_waypoints']:
+        print(f"⚠️  发现无效航点: {validation_result['invalid_waypoints']}")
+    if validation_result['already_processed']:
+        print(f"ℹ️  发现已处理航点: {validation_result['already_processed']}")
+    if validation_result['completion_markers']:
+        print(f"🏁 发现任务完成标记: {validation_result['completion_markers']}")
+    
+    # 使用有效航点创建飞行计划
+    valid_waypoints = validation_result['valid_waypoints']
+    print(f"✅ 有效航点数量: {len(valid_waypoints)}/{len(waypoint_names)}")
+    
     # 创建飞行路径管理器
     flight_manager = FlightPathManager()
     flight_manager.create_waypoints_from_user_format(
-        waypoint_names=waypoint_names,
+        waypoint_names=valid_waypoints,  # 只使用有效航点
         coordinate_dict=COORDINATES,
         height=height,
         yaw=0.0,
@@ -298,22 +285,43 @@ async def approach_detected_objects(drone, vision_system: VisionGuidanceSystem,
 
 # 运行
 async def run(user_waypoint_list: List[str] = None, enable_serial_listening: bool = False):
-    """边飞行边检测的主函数"""
-    waypoint_listener = None
+    # ====================接收串口屏的消息=======================
+    DRONERECEIVE = '#'
+    DRONESEND = '$'
+    LORA_PACKET_FOOTER = "%"
+    # --- 串口设置 ---
+    SERIAL_PORT = '/dev/ttyUSB0'
+    BAUD_RATE = 9600
+
+    ser_port = SerialPort(port=SERIAL_PORT, baudrate=BAUD_RATE)
+    if not ser_port.open():
+        return
     
-    if enable_serial_listening:
-        waypoint_listener = WaypointListener()
-        if waypoint_listener.start_listening():
-            print("等待串口航点消息...")
-            user_waypoint_list = waypoint_listener.get_waypoints(timeout=30)
-            if user_waypoint_list:
-                print(f"收到航点列表: {user_waypoint_list}")
-            else:
-                print("未收到航点消息，使用默认航点")
-                user_waypoint_list = ["A9B1", "A8B1", "A7B1", "A3B3"]
-        else:
-            print("串口监听启动失败，使用默认航点")
-            user_waypoint_list = ["A9B1", "A8B1", "A7B1", "A3B3"]
+    mylist = []
+
+    # 保持程序运行，等待接收数据
+    def command_handler(content, full_packet):
+        # ----------------------------------解析字符串----------------------------
+        global mylist
+        mylist = content
+        print(f"收到命令: {content}")
+
+    ser_port.register_packet_handler(DRONERECEIVE, command_handler)
+    ser_port.start_receiving()
+
+    print("等待接收数据")
+    while ser_port.receivetime < 1:
+        time.sleep(0.1)
+    print('收到禁飞区:'+list)
+    routine = get_mapping_result(tuple(sorted(mylist)))
+    print('使用的航点清单:'+routine)
+
+    # ====================点亮小灯作为指示灯:防止发生意外=====================
+
+
+
+
+
     # ==================== 无人机初始化 ====================
     drone = System()
     await drone.connect(system_address="udp://127.0.0.1:14540")
@@ -346,30 +354,33 @@ async def run(user_waypoint_list: List[str] = None, enable_serial_listening: boo
         await drone.action.disarm()
         return
 
-    # ==================== 配置系统 ====================
+    # ======================================== 配置系统 ============================
     # 相机配置
     camera_config = CameraConfig(
         width=640,
         height=480,
         fps=30,
         device_id=0,
-        offset_forward=0.0,
-        offset_right=0.0,
-        offset_down=0.05,
+        offset_forward=0.0,# 待调
+        offset_right=0.0,# 待调
+        offset_down=0.0,
         show_window=False
     )
     
     # 导航配置
     navigation_config = {
+        # -------------------------实际测试像素长度宽度和面积, 便于测试---------------------------------
+        # ------------------------设置对准的时间--------------------------
         'position_tolerance': 100,
-        'min_target_area': 1000,
+        'min_target_area': 1000,# 待调
         'max_velocity': 0.5,
-        'offset_compensation_gain': 0.6,
-        'alignment_duration': 0.5,
-        'completion_tolerance': 80
+        'offset_compensation_gain': 0.7,# 待调
+        'alignment_duration': 0.5,# 待调
+        'completion_tolerance': 80# 待调
     }
     
     # PID配置
+    #---------------------------------待调-------------------------
     pid_config = {
         'horizontal': {'kp': 0.1, 'ki': 0.0, 'kd': 0.0, 'output_limit': 0.5},
         'vertical': {'kp': 0.1, 'ki': 0.0, 'kd': 0.0, 'output_limit': 0.5},
@@ -384,17 +395,15 @@ async def run(user_waypoint_list: List[str] = None, enable_serial_listening: boo
         pid_config=pid_config
     )
     
-    # ==================== 创建检测管理器 ====================
     detection_manager = DetectionManager(
-        model_path="vision/yolo/best.pt",
+        model_path="vision/yolo/best9999.engine",
         conf_threshold=0.5,
         device="cuda",  # 或者 "cuda" 如果有GPU
         camera_id=0
     )
     
     # ==================== 定义飞行路径 ====================
-    flight_manager = create_waypoint_flight_plan(user_waypoint_list, HEIGHT, DURATION)
-    
+    flight_manager = create_waypoint_flight_plan(routine, HEIGHT, DURATION)
     print(f"飞行路径规划完成，共 {len(flight_manager.waypoints)} 个航点")
     # 开始任务
     flight_manager.start_mission()
@@ -406,7 +415,7 @@ async def run(user_waypoint_list: List[str] = None, enable_serial_listening: boo
             if not current_waypoint:
                 break
             print(f"\n🛩️  前往航点: {current_waypoint.name} at ({current_waypoint.north:.1f}, {current_waypoint.east:.1f}, {current_waypoint.down:.1f})")
-            # 飞往航点
+            # -------------------------------等待替换-----------------------------------------
             await goto_position_ned(
                 drone, 
                 current_waypoint.north, 
@@ -419,80 +428,99 @@ async def run(user_waypoint_list: List[str] = None, enable_serial_listening: boo
             # 标记航点到达
             flight_manager.mark_waypoint_arrived()
             
-            # ==================== 航点检测和逼近 ====================
+            # ==================== 航点检测和逼近 (优化：每个航点只检测一次) ====================
             if current_waypoint.enable_detection:
-                print(f"🔍 在航点 {current_waypoint.name} 开始物体检测")
-                
-                # 进入检测模式
-                flight_manager.enter_detection_mode()
-                
-                # 从摄像头检测物体
-                waypoint_position = (current_waypoint.north, current_waypoint.east, current_waypoint.down)
-                detections = detection_manager.detect_objects_from_camera(
-                    current_waypoint.name, 
-                    waypoint_position
-                )
-                
-                # 获取检测统计和格式化结果
-                if detections:
-                    counts = detection_manager.get_detection_counts(detections)
-                    formatted_result = detection_manager.format_detection_result(detections)
-                    print(f"🎯 航点 {current_waypoint.name} 检测统计: {counts}")
-                    print(f"📊 格式化结果: {formatted_result}")
-                    
-                    # 发送检测结果
-                    detection_message = send_detection_result(
-                        current_waypoint.name, detections, detection_manager
-                    )
+                # 检查航点是否应该处理 (防止重复图像识别)
+                if not WAYPOINT_MANAGER.should_process_waypoint(current_waypoint.name):
+                    print(f"⏭️  航点 {current_waypoint.name} 已处理过，跳过检测")
+                    # 航点已处理过，直接跳过所有检测相关处理
                 else:
-                    print(f"❌ 航点 {current_waypoint.name} 未检测到物体")
-                    # 发送空检测结果
-                    empty_message = {
-                        'position': current_waypoint.name,
-                        'detections': '{e0m0p0w0t0}',
-                        'total_objects': 0,
-                        'timestamp': datetime.now().isoformat()
-                    }
-                    print(f"📡 发送空检测结果: {empty_message}")
-                
-                # 更新检测数量
-                flight_manager.update_detection_count(len(detections))
-                
-                # 保存检测信息
-                detection_manager.save_detection_info(
-                    current_waypoint.name, 
-                    waypoint_position, 
-                    detections
-                )
-                
-                if detections and current_waypoint.approach_objects:
-                    # 如果检测到物体且需要逼近，则进行逼近操作
-                    await approach_detected_objects(
-                        drone, 
-                        vision_system, 
-                        detection_manager, 
+                    print(f"🔍 在航点 {current_waypoint.name} 开始物体检测 (首次处理)")
+                    
+                    # 进入检测模式
+                    flight_manager.enter_detection_mode()
+                    
+                    # 从摄像头检测物体
+                    waypoint_position = (current_waypoint.north, current_waypoint.east, current_waypoint.down)
+                    detections = detection_manager.detect_objects_from_camera(
                         current_waypoint.name, 
                         waypoint_position
                     )
-                else:
-                    if not detections:
-                        print(f"❌ 航点 {current_waypoint.name} 未检测到物体")
+                    
+                    # 标记航点已处理 (确保只处理一次)
+                    WAYPOINT_MANAGER.mark_waypoint_processed(current_waypoint.name)
+                    
+                    # 保存检测信息
+                    detection_manager.save_detection_info(
+                        current_waypoint.name, 
+                        waypoint_position, 
+                        detections
+                    )
+                    
+                    # 处理检测结果
+                    if detections:
+                        counts = detection_manager.get_detection_counts(detections)
+                        formatted_result = detection_manager.format_detection_result(detections)
+                        print(f"🎯 航点 {current_waypoint.name} 检测统计: {counts}")
+                        print(f"📊 格式化结果: {formatted_result}")
+                        
+                        # 发送检测结果
+                        detection_message = send_detection_result(
+                            current_waypoint.name, detections, detection_manager
+                        )
                     else:
-                        print(f"ℹ️  航点 {current_waypoint.name} 检测到物体但跳过逼近")
-                
-                # 退出检测模式
-                flight_manager.exit_special_mode()
+                        print(f"❌ 航点 {current_waypoint.name} 未检测到物体")
+                        # 发送空检测结果
+                        empty_message = {
+                            'position': current_waypoint.name,
+                            'detections': '{e0m0p0w0t0}',
+                            'total_objects': 0,
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        print(f"📡 发送空检测结果: {empty_message}")
+                    
+                    # 更新检测数量
+                    flight_manager.update_detection_count(len(detections))
+                    
+                    if detections and current_waypoint.approach_objects:
+                        # 如果检测到物体且需要逼近，则进行逼近操作
+                        await approach_detected_objects(
+                            drone, 
+                            vision_system, 
+                            detection_manager, 
+                            current_waypoint.name, 
+                            waypoint_position
+                        )
+                    else:
+                        if not detections:
+                            print(f"❌ 航点 {current_waypoint.name} 未检测到物体")
+                        else:
+                            print(f"ℹ️  航点 {current_waypoint.name} 检测到物体但跳过逼近")
+                    
+                    # 退出检测模式
+                    flight_manager.exit_special_mode()
             
             # 完成当前航点
             flight_manager.mark_waypoint_completed()
             
-            # 显示进度
+            # 显示进度 (飞行管理器 + 航点处理管理器)
             progress = flight_manager.get_progress_info()
-            print(f"📊 任务进度: {progress['progress_percentage']:.1f}% ({progress['completed_waypoints']}/{progress['total_waypoints']})")
+            waypoint_stats = WAYPOINT_MANAGER.get_processing_stats()
+            print(f"飞行进度: {progress['progress_percentage']:.1f}% ({progress['completed_waypoints']}/{progress['total_waypoints']})")
+            print(f"处理进度: {waypoint_stats['completion_percentage']:.1f}% ({waypoint_stats['processed_count']}/{waypoint_stats['total_waypoints']})")
         
         print("🏁 所有航点飞行完成")
         # ==================== 任务总结 ====================
         flight_manager.end_mission()
+        
+        # 显示优化航点管理器统计
+        waypoint_stats = WAYPOINT_MANAGER.get_processing_stats()
+        print(f"\n📊 航点处理统计 (优化系统):")
+        print(f"   总航点数: {waypoint_stats['total_waypoints']}")
+        print(f"   已处理数: {waypoint_stats['processed_count']}")
+        print(f"   完成率: {waypoint_stats['completion_percentage']:.1f}%")
+        print(f"   剩余航点: {waypoint_stats['remaining_count']}")
+        
         # 显示检测统计
         detection_summary = detection_manager.get_detection_summary()
         print(f"\n📈 检测统计:")
@@ -535,58 +563,16 @@ async def run(user_waypoint_list: List[str] = None, enable_serial_listening: boo
             # 清理资源
             vision_system.cleanup()
             detection_manager.cleanup()
-            if waypoint_listener:
-                waypoint_listener.stop_listening()
+            # 重置航点管理器状态 (如果需要重新开始任务)
+            # WAYPOINT_MANAGER.reset_processing_state()  # 取消注释以重置状态
             print("✅ 资源清理完成")
         except Exception as e:
             print(f"资源清理失败: {e}")
         
         print("🎉 任务完成！")
 
-# 主程序入口
-# --- 串口设置 ---
-SERIAL_PORT = '/dev/ttyUSB0'
-BAUD_RATE = 9600
-
-# --- 发送数据包协议定义 ---
-LORA_HEADER_GOODS = "$GOODS,"
-LORA_HEADER_X = "$XDATA,"
-LORA_HEADER_Y = "$YDATA,"
-LORA_HEADER_VELOCITY = "$VELOCITY,"
-LORA_HEADER_SEARCH = "$SEARCH,"
-LORA_HEADER_SEARCHID = "$$SEARCHID,"
-LORA_HEADER_COMMAND_TJC = "%COMMAND,"
-REICEIVE = '#'
-
-# --- 接收数据包协议定义 ---
-LORA_HEADER_COMMAND_RECV = "$$COMMAND,"
-
-# --- 通用包尾 ---
-LORA_PACKET_FOOTER = "%"
-
-if __name__ == "__main__":
-    # 模拟传入过程
-    try:
-        # 创建串口对象
-        ser_port = SerialPort(port=SERIAL_PORT, baudrate=BAUD_RATE)
-        if not ser_port.open():
-            print("无法打开")
-
-        ser_port.register_packet_handler(REICEIVE, command_handler)
-
-    except KeyboardInterrupt:
-        print("\n程序被用户中断")
-    except Exception as e:
-        print(f"发生错误: {e}")
-    finally:
-        # 确保串口被关闭
         if 'ser_port' in locals():
             ser_port.close()
-            
-    # user_waypoints = ["A9B1", "A8B1", "A7B1", "A3B3"]
-    
-    # 启用串口监听模式，注释掉下面一行则使用默认航点
-    # asyncio.run(run(user_waypoints, enable_serial_listening=True))
-    
-    # 默认模式（使用预设航点）
-    # asyncio.run(run(user_waypoints))
+
+if __name__ == "__main__":
+    asyncio.run(run())

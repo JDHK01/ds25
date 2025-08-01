@@ -7,7 +7,7 @@
 import sys
 sys.path.append('/Users/yqz/by/wrj/gc')
 
-from plan import plan_path_api
+from gc.dump.plan import plan_path_api
 
 def test_path_planning():
     """测试路径规划功能"""
