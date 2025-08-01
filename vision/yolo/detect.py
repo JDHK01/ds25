@@ -484,7 +484,7 @@ def main():
         
         # 拼接成最终字符串
         return ''.join(parts)
-
+    start = time.time()
     # 清空缓冲区，获取最新帧
     for _ in range(2):
         cap.grab()
@@ -500,12 +500,14 @@ def main():
             print("摄像头读取失败")    
     # ret, frame = cap.read()
     result = detector.detect_animals(frame, show_result=False)
+    end = time.time()
     if not result:
         print("未识别到")
     else:
         print(result)
     print('转换后:')
     print(format_animal_counts(result))
+    print(end-start)
 
     # print(end-start)
     # start = time.time()
