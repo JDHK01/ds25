@@ -164,13 +164,19 @@ class Drone_Controller:
         #第一次遍历到时进行动物识别，并串口发送识别结果
         if self.visit_status[label] == 0:
             self.visit_status[label] = 1
-            ret, frame = cap.read()
-            result = detector.detect_animals(frame, show_result=False)
-            if not result:
-                print("未识别到")
+            # 清空缓冲区，获取最新帧
+            for _ in range(2):
+                cap.grab()
+            ret, frame = cap.retrieve()
+            if ret:
+                result = detector.detect_animals(frame, show_result=False)
+                if not result:
+                    print("未识别到")
+                else:
+                    print("识别到")
+                    ser_port.send_lora_packet(DRONESEND ,label + self.format_animal_counts(result), footer=LORA_PACKET_FOOTER)
             else:
-                print("识别到")
-                ser_port.send_lora_packet(DRONESEND ,label + self.format_animal_counts(result), footer=LORA_PACKET_FOOTER)    
+                print("摄像头读取失败")    
             
         async for pos in drone.telemetry.position_velocity_ned():
             my_pos = self.mytf(pos.position.north_m, pos.position.east_m, pos.position.down_m, 0)
@@ -256,7 +262,8 @@ class Drone_Controller:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 设置缓冲区为1帧
-        cap.set(cv2.CAP_PROP_FPS, 30)  # 降低帧率
+        cap.set(cv2.CAP_PROP_FPS, 15)  # 降低帧率减少延迟
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))  # 使用MJPEG编码
 
         print("[任务] 启动飞行任务")
         if not self.path:
