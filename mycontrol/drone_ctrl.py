@@ -301,14 +301,11 @@ class Drone_Controller:
                     print("识别到动物，发送识别结果")
                     ser_port.send_lora_packet(DRONESEND ,label + self.format_animal_counts(result), footer=LORA_PACKET_FOOTER)
                     
-                    # 检查是否有置信度>0.7的检测结果，如果有则启动追踪
+                    # 检查是否检测到动物（detect_animals返回的是计数字典）
                     has_high_confidence = False
-                    for animal_type, boxes in result.items():
-                        for box in boxes:
-                            if len(box) > 4 and box[4] > 0.7:  # 置信度>0.7
-                                has_high_confidence = True
-                                break
-                        if has_high_confidence:
+                    for animal_type, count in result.items():
+                        if count > 0:  # 检测到任何动物就认为是高置信度
+                            has_high_confidence = True
                             break
                     
                     if has_high_confidence:
