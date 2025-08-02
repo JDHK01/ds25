@@ -20,7 +20,6 @@ import LED_Flash as led
 
 from mavsdk.offboard import ( PositionNedYaw, VelocityBodyYawspeed)
 
-
 # --- 串口设置 ---
 DRONERECEIVE = '#'
 DRONESEND = '$ANI'
@@ -128,12 +127,12 @@ class Drone_Controller:
         
         # 导航参数
         nav_config = navigation_config or {}
-        self.position_tolerance = nav_config.get('position_tolerance', 30)
+        self.position_tolerance = nav_config.get('position_tolerance', 100)
         self.min_target_area = nav_config.get('min_target_area', 1000)
         self.max_velocity = nav_config.get('max_velocity', 0.5)
         self.offset_compensation_gain = nav_config.get('offset_compensation_gain', 1.0)
         self.alignment_duration = nav_config.get('alignment_duration', 2.0)
-        self.completion_tolerance = nav_config.get('completion_tolerance', 15)
+        self.completion_tolerance = nav_config.get('completion_tolerance', 50)
         
         # PID控制器配置
         pid_config = pid_config or {}
@@ -144,7 +143,7 @@ class Drone_Controller:
         self.task_state = TaskState.TRACKING
         self.is_tracking = False
         self.last_detection_time = 0
-        self.detection_timeout = 2.0
+        self.detection_timeout = 1.5
         self.alignment_start_time = None
         self.task_completed = False
         self.completion_time = None
@@ -299,8 +298,31 @@ class Drone_Controller:
                 if not result:
                     print("未识别到")
                 else:
-                    print("识别到")
+                    print("识别到动物，发送识别结果")
                     ser_port.send_lora_packet(DRONESEND ,label + self.format_animal_counts(result), footer=LORA_PACKET_FOOTER)
+                    
+                    # 检查是否有置信度>0.7的检测结果，如果有则启动追踪
+                    has_high_confidence = False
+                    for animal_type, boxes in result.items():
+                        for box in boxes:
+                            if len(box) > 4 and box[4] > 0.7:  # 置信度>0.7
+                                has_high_confidence = True
+                                break
+                        if has_high_confidence:
+                            break
+                    
+                    if has_high_confidence:
+                        print("检测到高置信度目标，启动追踪模式")
+                        # 重置追踪状态确保从新状态开始
+                        self.reset_tracking_task()
+                        # 启动1.0s追踪
+                        tracking_success = await self.visual_tracking_mode(drone, detector, duration=1.0)
+                        if tracking_success:
+                            print("追踪任务完成")
+                        else:
+                            print("追踪超时退出")
+                    else:
+                        print("置信度不足，跳过追踪")
             else:
                 print("摄像头读取失败")    
             
@@ -309,6 +331,7 @@ class Drone_Controller:
             if self.dst3d(my_pos[:3], (*next_point,-1.2)) < 0.1:
                 print(f"[到达] 已到达 {next_point}")
                 break
+            
         await self.print_current_position(drone)
 
     async def print_current_position(self, drone):
@@ -494,33 +517,20 @@ class Drone_Controller:
                         center_y = (y1 + y2) // 2
                         area = (x2 - x1) * (y2 - y1)
                         
-                        if area > self.min_target_area:
+                        confidence = box[4] if len(box) > 4 else 0.0
+                        if area > self.min_target_area and confidence > 0.7:
                             detections.append({
                                 'center': (center_x, center_y),
                                 'bbox': (x1, y1, x2, y2),
                                 'area': area,
                                 'class_name': animal_type,
-                                'confidence': box[4] if len(box) > 4 else 0.0
+                                'confidence': confidence
                             })
         
         # 检测到物体 -> 处理跟踪
         if detections:
-            # 选择距离画面中心最近的目标
-            if len(detections) == 1:
-                best_detection = detections[0]
-            else:
-                frame_center_x = self.camera_config.width // 2
-                frame_center_y = self.camera_config.height // 2
-                
-                min_distance = float('inf')
-                best_detection = None
-                
-                for detection in detections:
-                    center_x, center_y = detection['center']
-                    distance = np.sqrt((center_x - frame_center_x)**2 + (center_y - frame_center_y)**2)
-                    if distance < min_distance:
-                        min_distance = distance
-                        best_detection = detection
+            # 选择面积最大的目标
+            best_detection = max(detections, key=lambda d: d['area'])
                         
             # 处理选中的目标
             center_x, center_y = best_detection['center']
@@ -609,16 +619,20 @@ class Drone_Controller:
         """清理相机资源"""
         if self.camera and self.camera.isOpened():
             self.camera.release()
-        cv2.destroyAllWindows()
+        # 移除cv2.destroyAllWindows()调用以避免可视化界面
     
-    async def visual_tracking_mode(self, drone, detector, duration=10.0):
-        """视觉跟踪模式 - 独立的跟踪功能"""
-        print(f"[跟踪] 启动视觉跟踪模式，持续时间: {duration}秒")
+    async def visual_tracking_mode(self, drone, detector, duration=1.0):
+        """视觉跟踪模式 - 独立的跟踪功能，最多1.0s后自动退出"""
+        print(f"[跟踪] 启动视觉跟踪模式，最大持续时间: {duration}秒")
+        
+        # 确保无界面模式
+        self.camera_config.show_window = False
         
         # 初始化相机
         self.init_camera()
         
         start_time = time.time()
+        tracking_started = False
         
         try:
             while time.time() - start_time < duration:
@@ -626,6 +640,11 @@ class Drone_Controller:
                 frame, command = self.process_tracking_frame(detector)
                 
                 if frame is not None:
+                    # 检查是否检测到目标并开始跟踪
+                    if command is not None and not tracking_started:
+                        tracking_started = True
+                        print(f"[跟踪] 检测到目标，开始跟踪面积最大的物体")
+                    
                     # 检查任务是否完成
                     if self.is_task_completed():
                         print("视觉跟踪任务已完成！")
@@ -666,8 +685,8 @@ class Drone_Controller:
                 VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0)
             )
             
-        print(f"[跟踪] 跟踪模式结束，持续时间: {time.time() - start_time:.2f}秒")
-        return False  # 返回False表示未完成跟踪（超时）
+        print(f"[跟踪] 跟踪模式结束（1.0s超时），持续时间: {time.time() - start_time:.2f}秒")
+        return False  # 返回False表示超时退出
 
     async def pilot_plan(self, drone, ser_port):
 
