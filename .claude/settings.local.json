@@ -7,7 +7,8 @@
       "mcp__ide__executeCode",
       "Bash(pip3 install:*)",
       "Bash(mkdir:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }

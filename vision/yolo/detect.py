@@ -464,7 +464,8 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 设置缓冲区为1帧
-    cap.set(cv2.CAP_PROP_FPS, 30)  # 降低帧率
+    cap.set(cv2.CAP_PROP_FPS, 15)  # 降低帧率减少延迟
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))  # 使用MJPEG编码
 
     def format_animal_counts(animal_dict):
         # 严格定义顺序：elephant(e) → monkey(m) → peacock(p) → wolf(w) → tiger(t)
@@ -483,15 +484,31 @@ def main():
         
         # 拼接成最终字符串
         return ''.join(parts)
-
+    
+    start = time.time()
+    # # 清空缓冲区，获取最新帧
+    # for _ in range(2):
+    #     cap.grab()
+    #     ret, frame = cap.retrieve()
+    #     if ret:
+    #         result = detector.detect_animals(frame, show_result=False)
+    #         if not result:
+    #             print("未识别到")
+    #         else:
+    #             print("识别到")
+    #             ser_port.send_lora_packet(DRONESEND ,label + self.format_animal_counts(result), footer=LORA_PACKET_FOOTER)
+    #     else:
+    #         print("摄像头读取失败")    
     ret, frame = cap.read()
     result = detector.detect_animals(frame, show_result=False)
+    end = time.time()
     if not result:
         print("未识别到")
     else:
         print(result)
     print('转换后:')
     print(format_animal_counts(result))
+    print(end-start)
 
     # print(end-start)
     # start = time.time()
