@@ -11,6 +11,7 @@ from mavsdk.offboard import PositionNedYaw, VelocityBodyYawspeed
 import Jetson.GPIO as GPIO
 import LED_Flash as led
 import asyncio
+import cv2
 
 from mavsdk.offboard import ( PositionNedYaw, VelocityBodyYawspeed)
 
@@ -97,6 +98,51 @@ class Drone_Controller:
         self.path = self.convert_path(path_label)
 
         self.visit_status = {label: 0 for label in self.label_map.keys()}
+
+    @staticmethod
+    def find_available_camera():
+        """
+        自动检测可用的摄像头设备ID
+        返回第一个可用的摄像头ID，如果没有找到则返回None
+        """
+        for camera_id in range(10):  # 检测0-9的设备ID
+            cap = cv2.VideoCapture(camera_id)
+            if cap.isOpened():
+                # 尝试读取一帧来确认摄像头真正可用
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None:
+                    print(f"[摄像头] 找到可用摄像头: ID {camera_id}")
+                    return camera_id
+            cap.release()
+        
+        print("[摄像头] 警告: 未找到可用摄像头")
+        return None
+
+    @staticmethod
+    def init_camera_robust(camera_id=None):
+        """
+        鲁棒的摄像头初始化函数
+        如果指定的camera_id不可用，会自动搜索其他可用摄像头
+        """
+        if camera_id is not None:
+            # 尝试指定的摄像头ID
+            cap = cv2.VideoCapture(camera_id)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    print(f"[摄像头] 成功使用指定摄像头: ID {camera_id}")
+                    return cap
+            cap.release()
+            print(f"[摄像头] 指定摄像头ID {camera_id}不可用，自动搜索其他摄像头...")
+        
+        # 自动搜索可用摄像头
+        available_id = Drone_Controller.find_available_camera()
+        if available_id is not None:
+            cap = cv2.VideoCapture(available_id)
+            return cap
+        else:
+            raise RuntimeError("无法找到任何可用的摄像头设备")
 
     def convert_path(self, path_label):
         path = []
@@ -250,8 +296,12 @@ class Drone_Controller:
         #=============检测器初始化=============
         # 创建检测器
         detector = YOLOv8AnimalDetector('/home/by/ds25/temp/vision/yolo/best9999.onnx')
-        # 打开摄像头
-        cap = cv2.VideoCapture(0)
+        # 鲁棒地打开摄像头
+        try:
+            cap = self.init_camera_robust(0)  # 优先尝试摄像头0
+        except RuntimeError as e:
+            print(f"[错误] {e}")
+            return
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -267,10 +317,18 @@ class Drone_Controller:
         for i in range(1, len(self.path)):
             next_point = self.path[i]
             if current_point == self.label_map["A8B1"]  and next_point == self.label_map["A9B1"]:
+                cap.release()
+                print("[摄像头] 已释放摄像头资源")
                 await self.land_from_A8B1(drone)
                 return
             elif current_point == self.label_map["A9B2"] and next_point == self.label_map["A9B1"]:
+                cap.release()
+                print("[摄像头] 已释放摄像头资源")
                 await self.land_from_A9B2(drone)
                 return
             await self.goto_next(drone, current_point, next_point,ser_port, cap, detector, label=self.path_label[i])
             current_point = next_point
+        
+        # 释放摄像头资源
+        cap.release()
+        print("[摄像头] 已释放摄像头资源")
